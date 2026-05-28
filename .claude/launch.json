@@ -1,0 +1,82 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api-gateway",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:dev"],
+      "port": 3000,
+      "cwd": "api-gateway"
+    },
+    {
+      "name": "auth-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8081,
+      "cwd": "auth-service"
+    },
+    {
+      "name": "customer-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8082,
+      "cwd": "customer-service"
+    },
+    {
+      "name": "account-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8083,
+      "cwd": "account-service"
+    },
+    {
+      "name": "saving-product-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8084,
+      "cwd": "saving-product-service"
+    },
+    {
+      "name": "saving-contract-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8085,
+      "cwd": "saving-contract-service"
+    },
+    {
+      "name": "saving-transaction-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8086,
+      "cwd": "saving-transaction-service"
+    },
+    {
+      "name": "saving-interest-service",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["app.main:app", "--reload", "--port", "8087"],
+      "port": 8087,
+      "cwd": "saving-interest-service"
+    },
+    {
+      "name": "saving-lifecycle-service",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["app.main:app", "--reload", "--port", "8088"],
+      "port": 8088,
+      "cwd": "saving-lifecycle-service"
+    },
+    {
+      "name": "saving-notification-service",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:dev"],
+      "port": 8089,
+      "cwd": "saving-notification-service"
+    },
+    {
+      "name": "core-banking-mock",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["main:app", "--reload", "--port", "8099"],
+      "port": 8099,
+      "cwd": "core-banking-mock"
+    }
+  ]
+}

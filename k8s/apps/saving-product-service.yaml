@@ -1,0 +1,80 @@
+# ==============================================================
+# saving-product-service – Spring Boot  |  Port 8084
+# Depends on: postgres, auth-service
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-product-service
+  namespace: saving-banking
+  labels:
+    app: saving-product-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-product-service
+  template:
+    metadata:
+      labels:
+        app: saving-product-service
+    spec:
+      containers:
+        - name: saving-product-service
+          image: localhost:5001/saving-product-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: SERVER_PORT
+              value: "8084"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA
+              value: saving_product_schema
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            failureThreshold: 20
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8084
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saving-product-service
+  namespace: saving-banking
+  labels:
+    app: saving-product-service
+spec:
+  selector:
+    app: saving-product-service
+  ports:
+    - name: http
+      port: 8084
+      targetPort: 8084

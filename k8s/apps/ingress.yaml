@@ -1,0 +1,30 @@
+# ==============================================================
+# NGINX Ingress – routes localhost:80 → api-gateway:3000
+# Requires NGINX Ingress Controller installed in the cluster.
+# deploy-all.ps1 installs it automatically.
+#
+# Access pattern (both work):
+#   http://localhost        → api-gateway (via Ingress, port 80)
+#   http://localhost:3000   → api-gateway (via NodePort)
+# ==============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: saving-banking-ingress
+  namespace: saving-banking
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 3000

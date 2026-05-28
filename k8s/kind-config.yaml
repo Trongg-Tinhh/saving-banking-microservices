@@ -1,0 +1,32 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: saving-banking
+
+# Cho phép Kind cluster kéo image từ local registry localhost:5001
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+      endpoint = ["http://kind-registry:5000"]
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.29.2
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80     # NGINX Ingress HTTP   → localhost:8080
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443    # NGINX Ingress HTTPS  → localhost:8443
+        hostPort: 8443
+        protocol: TCP
+      - containerPort: 30000  # API Gateway NodePort → localhost:3000
+        hostPort: 3000
+        protocol: TCP
+      - containerPort: 30672  # RabbitMQ Mgmt UI    → localhost:15672
+        hostPort: 15672
+        protocol: TCP

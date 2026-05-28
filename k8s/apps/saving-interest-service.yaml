@@ -1,0 +1,84 @@
+# ==============================================================
+# saving-interest-service – FastAPI (Python)  |  Port 8087
+# NOTE: K8s Service name is "interest-calculation-service" to
+#       match the DNS name other services use.
+# Health endpoint: /health
+# Depends on: postgres, auth-service
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-interest-service
+  namespace: saving-banking
+  labels:
+    app: saving-interest-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-interest-service
+  template:
+    metadata:
+      labels:
+        app: saving-interest-service
+    spec:
+      containers:
+        - name: saving-interest-service
+          image: localhost:5001/saving-interest-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8087
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "8087"
+            - name: POSTGRES_SCHEMA
+              value: interest_schema
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8087
+            failureThreshold: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8087
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8087
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+# Service name MUST be "interest-calculation-service" (matches env-var URLs)
+apiVersion: v1
+kind: Service
+metadata:
+  name: interest-calculation-service
+  namespace: saving-banking
+  labels:
+    app: saving-interest-service
+spec:
+  selector:
+    app: saving-interest-service
+  ports:
+    - name: http
+      port: 8087
+      targetPort: 8087

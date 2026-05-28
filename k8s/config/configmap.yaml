@@ -1,0 +1,62 @@
+# ==============================================================
+# K8s ConfigMap – non-sensitive configuration
+# All service-URL variants are included so every consumer can
+# find its own env-var name.
+# ==============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: saving-banking
+data:
+  # ── PostgreSQL connection (non-secret parts) ──────────────────
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB:   saving_banking
+  # Spring Boot JDBC URL (both naming conventions used across services)
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+  DB_URL:                jdbc:postgresql://postgres:5432/saving_banking
+
+  # ── RabbitMQ connection (non-secret parts) ───────────────────
+  RABBITMQ_HOST:          rabbitmq
+  RABBITMQ_PORT:          "5672"
+  RABBITMQ_DEFAULT_VHOST: /
+  RABBITMQ_ENABLED:       "true"
+  # Pre-built AMQP URL (used by NestJS / Python services via RABBITMQ_URL)
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+
+  # ── Spring Boot / common runtime ─────────────────────────────
+  SPRING_PROFILES_ACTIVE: docker
+  NODE_ENV:               production
+  ENV:                    docker
+
+  # ── Inter-service URLs ────────────────────────────────────────
+  AUTH_SERVICE_URL:           http://auth-service:8081
+  CUSTOMER_SERVICE_URL:       http://customer-service:8082
+  ACCOUNT_SERVICE_URL:        http://account-service:8083
+
+  PRODUCT_SERVICE_URL:        http://saving-product-service:8084
+  SAVING_PRODUCT_SERVICE_URL: http://saving-product-service:8084
+
+  CONTRACT_SERVICE_URL:        http://saving-contract-service:8085
+  SAVING_CONTRACT_SERVICE_URL: http://saving-contract-service:8085
+
+  TRANSACTION_SERVICE_URL: http://transaction-service:8086
+
+  INTEREST_SERVICE_URL: http://interest-calculation-service:8087
+
+  LIFECYCLE_SERVICE_URL:         http://saving-lifecycle-service:8088
+
+  NOTIFICATION_SERVICE_URL: http://notification-service:8089
+
+  # Core Banking System mock
+  CBS_URL:              http://core-banking-mock:8099
+  CORE_BANKING_MOCK_URL: http://core-banking-mock:8099
+
+  # ── JWT timing (non-secret) ───────────────────────────────────
+  JWT_EXPIRATION_MS:         "3600000"
+  JWT_REFRESH_EXPIRATION_MS: "86400000"
+
+  # ── API Gateway rate-limiting ─────────────────────────────────
+  RATE_LIMIT_TTL: "60"
+  RATE_LIMIT_MAX: "100"

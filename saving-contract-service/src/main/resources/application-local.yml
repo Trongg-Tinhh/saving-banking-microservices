@@ -1,0 +1,31 @@
+# ──────────────────────────────────────────────────────────────
+# LOCAL DEVELOPMENT PROFILE
+# Activate with: --spring.profiles.active=local
+# Or set env: SPRING_PROFILES_ACTIVE=local
+#
+# Use this when running Java services from IntelliJ/Maven directly
+# (outside Docker). Overrides Docker hostnames → localhost.
+# ──────────────────────────────────────────────────────────────
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/saving_banking
+    username: postgres
+    password: postgres
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+# Override service URLs from Docker hostnames → localhost
+services:
+  customer-url: http://localhost:8082
+  account-url:  http://localhost:8083
+  product-url:  http://localhost:8084
+
+logging:
+  level:
+    com.saving.contract: DEBUG
+    org.springframework.web.client: DEBUG

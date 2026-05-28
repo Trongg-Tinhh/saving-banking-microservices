@@ -1,0 +1,86 @@
+# ==============================================================
+# saving-transaction-service – Spring Boot  |  Port 8086
+# NOTE: K8s Service name is "transaction-service" to match the
+#       DNS name other services use (TRANSACTION_SERVICE_URL).
+# Reads: DB_URL / DB_USER / DB_PASS   (not SPRING_DATASOURCE_*)
+#        RABBITMQ_USER / RABBITMQ_PASS (not USERNAME/PASSWORD)
+#        PORT                          (not SERVER_PORT)
+# Depends on: postgres, rabbitmq, account-service,
+#             saving-contract-service, core-banking-mock
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-transaction-service
+  namespace: saving-banking
+  labels:
+    app: saving-transaction-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-transaction-service
+  template:
+    metadata:
+      labels:
+        app: saving-transaction-service
+    spec:
+      containers:
+        - name: saving-transaction-service
+          image: localhost:5001/saving-transaction-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            # This service uses PORT, not SERVER_PORT
+            - name: PORT
+              value: "8086"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8086
+            failureThreshold: 20
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8086
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8086
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+# Service name MUST be "transaction-service" (matches env-var URLs)
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-service
+  namespace: saving-banking
+  labels:
+    app: saving-transaction-service
+spec:
+  selector:
+    app: saving-transaction-service
+  ports:
+    - name: http
+      port: 8086
+      targetPort: 8086

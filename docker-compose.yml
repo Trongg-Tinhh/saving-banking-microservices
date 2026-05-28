@@ -1,0 +1,499 @@
+version: '3.8'
+
+# ==============================================================
+# SAVING BANKING MICROSERVICES - DOCKER COMPOSE
+# ==============================================================
+# Quick start:
+#   docker compose up -d postgres rabbitmq     ← infra only
+#   docker compose up -d                        ← all services
+# ==============================================================
+
+services:
+
+  # ============================================================
+  # INFRASTRUCTURE
+  # ============================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: saving-postgres
+    environment:
+      POSTGRES_DB: saving_banking
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/01_init_schemas.sql:/docker-entrypoint-initdb.d/01_init_schemas.sql
+      - ./db/02_seed_data.sql:/docker-entrypoint-initdb.d/02_seed_data.sql
+    networks:
+      - saving-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d saving_banking"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: saving-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # RabbitMQ Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - saving-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ============================================================
+  # CORE BANKING MOCK (Simple HTTP mock for CBS integration)
+  # ============================================================
+  core-banking-mock:
+    build:
+      context: ./core-banking-mock
+      dockerfile: Dockerfile
+    container_name: saving-cbs-mock
+    environment:
+      PORT: 8099
+    ports:
+      - "8099:8099"
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================================
+  # JAVA SERVICES (Spring Boot)
+  # ============================================================
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: saving-auth
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: auth_schema
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-guest}
+      JWT_SECRET: ${JWT_SECRET:-s4v1ng-b4nk1ng-jwt-s3cr3t-k3y-must-be-256-bits-long!!}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-3600000}
+      JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-86400000}
+      SERVER_PORT: 8081
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  customer-service:
+    build:
+      context: ./customer-service
+      dockerfile: Dockerfile
+    container_name: saving-customer
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: customer_schema
+      # application.yml reads RABBITMQ_HOST / RABBITMQ_USERNAME / RABBITMQ_PASSWORD
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-guest}
+      AUTH_SERVICE_URL: http://auth-service:8081
+      SERVER_PORT: 8082
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  account-service:
+    build:
+      context: ./account-service
+      dockerfile: Dockerfile
+    container_name: saving-account
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: account_schema
+      # application.yml reads RABBITMQ_HOST / RABBITMQ_USERNAME / RABBITMQ_PASSWORD
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-guest}
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CORE_BANKING_MOCK_URL: http://core-banking-mock:8099
+      SERVER_PORT: 8083
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      core-banking-mock:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  saving-product-service:
+    build:
+      context: ./saving-product-service
+      dockerfile: Dockerfile
+    container_name: saving-product
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: saving_product_schema
+      AUTH_SERVICE_URL: http://auth-service:8081
+      SERVER_PORT: 8084
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  saving-contract-service:
+    build:
+      context: ./saving-contract-service
+      dockerfile: Dockerfile
+    container_name: saving-contract
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/saving_banking
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: saving_contract_schema
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASS:-guest}
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CUSTOMER_SERVICE_URL: http://customer-service:8082
+      ACCOUNT_SERVICE_URL: http://account-service:8083
+      PRODUCT_SERVICE_URL: http://saving-product-service:8084
+      SERVER_PORT: 8085
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8085:8085"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      customer-service:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+      saving-product-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  transaction-service:
+    build:
+      context: ./saving-transaction-service
+      dockerfile: Dockerfile
+    container_name: saving-transaction
+    environment:
+      # application.yml reads DB_URL / DB_USER / DB_PASS  (not SPRING_DATASOURCE_*)
+      DB_URL: jdbc:postgresql://postgres:5432/saving_banking
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASS: ${POSTGRES_PASSWORD:-postgres}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      # application.yml reads RABBITMQ_USER / RABBITMQ_PASS  (not RABBITMQ_USERNAME/PASSWORD)
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_ENABLED: "true"
+      AUTH_SERVICE_URL: http://auth-service:8081
+      ACCOUNT_SERVICE_URL: http://account-service:8083
+      SAVING_CONTRACT_SERVICE_URL: http://saving-contract-service:8085
+      # application.yml reads CBS_URL  (not CORE_BANKING_MOCK_URL)
+      CBS_URL: http://core-banking-mock:8099
+      # application.yml reads PORT  (not SERVER_PORT)
+      PORT: 8086
+    ports:
+      - "8086:8086"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+      saving-contract-service:
+        condition: service_healthy
+      core-banking-mock:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ============================================================
+  # PYTHON SERVICES (FastAPI)
+  # ============================================================
+  interest-calculation-service:
+    build:
+      context: ./saving-interest-service
+      dockerfile: Dockerfile
+    container_name: saving-interest
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: saving_banking
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SCHEMA: interest_schema
+      AUTH_SERVICE_URL: http://auth-service:8081
+      PORT: 8087
+      ENV: docker
+    ports:
+      - "8087:8087"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  saving-lifecycle-service:
+    build:
+      context: ./saving-lifecycle-service
+      dockerfile: Dockerfile
+    container_name: saving-lifecycle
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: saving_banking
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SCHEMA: saving_lifecycle_schema
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      AUTH_SERVICE_URL: http://auth-service:8081
+      SAVING_CONTRACT_SERVICE_URL: http://saving-contract-service:8085
+      INTEREST_SERVICE_URL: http://interest-calculation-service:8087
+      TRANSACTION_SERVICE_URL: http://transaction-service:8086
+      ACCOUNT_SERVICE_URL: http://account-service:8083
+      PORT: 8088
+      ENV: docker
+    ports:
+      - "8088:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      interest-calculation-service:
+        condition: service_healthy
+      saving-contract-service:
+        condition: service_healthy
+      transaction-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ============================================================
+  # NODE.JS SERVICES (NestJS)
+  # ============================================================
+  notification-service:
+    build:
+      context: ./saving-notification-service
+      dockerfile: Dockerfile
+    container_name: saving-notification
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: saving_banking
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SCHEMA: notification_schema
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:8081
+      PORT: 8089
+      NODE_ENV: production
+    ports:
+      - "8089:8089"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      # Health endpoint is under the controller prefix, not root /health
+      test: ["CMD", "curl", "-f", "http://localhost:8089/api/v1/notifications/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: saving-gateway
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CUSTOMER_SERVICE_URL: http://customer-service:8082
+      ACCOUNT_SERVICE_URL: http://account-service:8083
+      SAVING_PRODUCT_SERVICE_URL: http://saving-product-service:8084
+      SAVING_CONTRACT_SERVICE_URL: http://saving-contract-service:8085
+      TRANSACTION_SERVICE_URL: http://transaction-service:8086
+      INTEREST_SERVICE_URL: http://interest-calculation-service:8087
+      LIFECYCLE_SERVICE_URL: http://saving-lifecycle-service:8088
+      NOTIFICATION_SERVICE_URL: http://notification-service:8089
+      JWT_SECRET: ${JWT_SECRET:-s4v1ng-b4nk1ng-jwt-s3cr3t-k3y-must-be-256-bits-long!!}
+      PORT: 3000
+      NODE_ENV: production
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 100
+    ports:
+      - "3000:3000"
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      customer-service:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+      saving-product-service:
+        condition: service_healthy
+      saving-contract-service:
+        condition: service_healthy
+      transaction-service:
+        condition: service_healthy
+      interest-calculation-service:
+        condition: service_healthy
+      saving-lifecycle-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    networks:
+      - saving-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# ==============================================================
+# VOLUMES & NETWORKS
+# ==============================================================
+volumes:
+  postgres_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+
+networks:
+  saving-net:
+    driver: bridge
+    name: saving-banking-network

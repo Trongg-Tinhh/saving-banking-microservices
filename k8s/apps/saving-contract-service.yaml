@@ -1,0 +1,81 @@
+# ==============================================================
+# saving-contract-service – Spring Boot  |  Port 8085
+# Depends on: postgres, rabbitmq, auth-service, customer-service,
+#             account-service, saving-product-service
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-contract-service
+  namespace: saving-banking
+  labels:
+    app: saving-contract-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-contract-service
+  template:
+    metadata:
+      labels:
+        app: saving-contract-service
+    spec:
+      containers:
+        - name: saving-contract-service
+          image: localhost:5001/saving-contract-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8085
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: SERVER_PORT
+              value: "8085"
+            - name: SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA
+              value: saving_contract_schema
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8085
+            failureThreshold: 20
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8085
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8085
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saving-contract-service
+  namespace: saving-banking
+  labels:
+    app: saving-contract-service
+spec:
+  selector:
+    app: saving-contract-service
+  ports:
+    - name: http
+      port: 8085
+      targetPort: 8085

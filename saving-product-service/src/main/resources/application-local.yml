@@ -1,0 +1,17 @@
+# LOCAL DEVELOPMENT PROFILE
+# Activate with: --spring.profiles.active=local
+# Or set env: SPRING_PROFILES_ACTIVE=local
+#
+# Use this when running saving-product-service from IntelliJ/Maven directly
+# (outside Docker). Overrides the default saving_user/saving_pass credentials
+# → actual local DB uses postgres/postgres.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/saving_banking
+    username: postgres
+    password: postgres
+
+logging:
+  level:
+    com.saving.product: DEBUG

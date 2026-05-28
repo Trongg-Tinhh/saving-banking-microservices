@@ -1,0 +1,84 @@
+# ==============================================================
+# saving-notification-service – NestJS (Node.js)  |  Port 8089
+# NOTE: K8s Service name is "notification-service" to match
+#       the DNS name other services use.
+# Health endpoint: /api/v1/notifications/health  (NOT /health)
+# Depends on: postgres, rabbitmq, auth-service
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-notification-service
+  namespace: saving-banking
+  labels:
+    app: saving-notification-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-notification-service
+  template:
+    metadata:
+      labels:
+        app: saving-notification-service
+    spec:
+      containers:
+        - name: saving-notification-service
+          image: localhost:5001/saving-notification-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8089
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "8089"
+            - name: POSTGRES_SCHEMA
+              value: notification_schema
+          startupProbe:
+            httpGet:
+              path: /api/v1/notifications/health
+              port: 8089
+            failureThreshold: 12
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/v1/notifications/health
+              port: 8089
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/notifications/health
+              port: 8089
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+# Service name MUST be "notification-service" (matches env-var URLs)
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: saving-banking
+  labels:
+    app: saving-notification-service
+spec:
+  selector:
+    app: saving-notification-service
+  ports:
+    - name: http
+      port: 8089
+      targetPort: 8089

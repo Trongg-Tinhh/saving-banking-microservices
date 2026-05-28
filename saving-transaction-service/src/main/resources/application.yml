@@ -1,0 +1,76 @@
+server:
+  port: ${PORT:8086}
+
+spring:
+  application:
+    name: saving-transaction-service
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/saving_banking}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:postgres}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: transaction_schema
+        format_sql: false
+    show-sql: false
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+    listener:
+      simple:
+        acknowledge-mode: manual
+        auto-startup: false
+        missing-queues-fatal: false
+        retry:
+          enabled: true
+          initial-interval: 2000
+          max-attempts: 3
+          multiplier: 2.0
+
+# Set rabbitmq.enabled=true when RabbitMQ is available (e.g. in Docker/production)
+rabbitmq:
+  enabled: ${RABBITMQ_ENABLED:false}
+
+jwt:
+  secret: ${JWT_SECRET:s4v1ng-b4nk1ng-jwt-s3cr3t-k3y-must-be-256-bits-long!!}
+
+# Core Banking Mock (CBS) URL
+cbs:
+  url: ${CBS_URL:http://localhost:8099}
+  sync-timeout-ms: ${CBS_SYNC_TIMEOUT:8000}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%X{correlationId}] %-5level %logger{36} - %msg%n"
+  level:
+    com.saving.transaction: INFO
+    org.springframework.amqp: WARN

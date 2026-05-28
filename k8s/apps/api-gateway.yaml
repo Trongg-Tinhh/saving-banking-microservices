@@ -1,0 +1,84 @@
+# ==============================================================
+# api-gateway – NestJS (Node.js)  |  Port 3000
+# Exposed via:
+#   • NodePort 30000 → localhost:3000 (Kind port mapping)
+#   • NGINX Ingress  → localhost:80   (see ingress.yaml)
+# Depends on: all other app services
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: saving-banking
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: localhost:5001/api-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "3000"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            failureThreshold: 12
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+# NodePort exposes api-gateway at localhost:3000 via Kind port mapping
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: saving-banking
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  type: NodePort
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30000   # → localhost:3000 via Kind extraPortMappings

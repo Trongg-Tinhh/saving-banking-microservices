@@ -1,0 +1,73 @@
+# ==============================================================
+# Core Banking Mock – Deployment + Service
+# Simple HTTP mock for CBS integration. Port 8099.
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-banking-mock
+  namespace: saving-banking
+  labels:
+    app: core-banking-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: core-banking-mock
+  template:
+    metadata:
+      labels:
+        app: core-banking-mock
+    spec:
+      containers:
+        - name: core-banking-mock
+          image: localhost:5001/core-banking-mock:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8099
+          env:
+            - name: PORT
+              value: "8099"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            failureThreshold: 10
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-banking-mock
+  namespace: saving-banking
+  labels:
+    app: core-banking-mock
+spec:
+  selector:
+    app: core-banking-mock
+  ports:
+    - name: http
+      port: 8099
+      targetPort: 8099

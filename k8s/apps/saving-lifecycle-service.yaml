@@ -1,0 +1,82 @@
+# ==============================================================
+# saving-lifecycle-service – FastAPI (Python)  |  Port 8088
+# Health endpoint: /health
+# Depends on: postgres, rabbitmq, saving-interest-service,
+#             saving-contract-service, transaction-service
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-lifecycle-service
+  namespace: saving-banking
+  labels:
+    app: saving-lifecycle-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-lifecycle-service
+  template:
+    metadata:
+      labels:
+        app: saving-lifecycle-service
+    spec:
+      containers:
+        - name: saving-lifecycle-service
+          image: localhost:5001/saving-lifecycle-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8088
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: PORT
+              value: "8088"
+            - name: POSTGRES_SCHEMA
+              value: saving_lifecycle_schema
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            failureThreshold: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saving-lifecycle-service
+  namespace: saving-banking
+  labels:
+    app: saving-lifecycle-service
+spec:
+  selector:
+    app: saving-lifecycle-service
+  ports:
+    - name: http
+      port: 8088
+      targetPort: 8088
