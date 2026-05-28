@@ -41,7 +41,7 @@ function Wait-StatefulSet {
 # STEP 1: NGINX Ingress Controller
 # ==============================================================
 if (-not $SkipIngress) {
-    Write-Host "`n[1/7] Cai NGINX Ingress Controller cho Kind..." -ForegroundColor Cyan
+    Write-Host "`n[1/8] Cai NGINX Ingress Controller cho Kind..." -ForegroundColor Cyan
     $ingressDeployed = kubectl get deployment ingress-nginx-controller -n ingress-nginx 2>&1
     if ($LASTEXITCODE -ne 0) {
         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
@@ -66,7 +66,7 @@ if (-not $SkipIngress) {
 # ==============================================================
 # STEP 2: Namespace + Config
 # ==============================================================
-Write-Host "`n[2/7] Apply namespace + ConfigMap + Secret..." -ForegroundColor Cyan
+Write-Host "`n[2/8] Apply namespace + ConfigMap + Secret..." -ForegroundColor Cyan
 kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/config/secret.yaml
 kubectl apply -f k8s/config/configmap.yaml
@@ -75,7 +75,7 @@ Write-Host "  -> Namespace va config da apply" -ForegroundColor Green
 # ==============================================================
 # STEP 3: Infrastructure (PostgreSQL + RabbitMQ)
 # ==============================================================
-Write-Host "`n[3/7] Deploy PostgreSQL + RabbitMQ..." -ForegroundColor Cyan
+Write-Host "`n[3/8] Deploy PostgreSQL + RabbitMQ..." -ForegroundColor Cyan
 kubectl apply -f k8s/infra/postgres/postgres.yaml
 kubectl apply -f k8s/infra/rabbitmq/rabbitmq.yaml
 
@@ -85,21 +85,21 @@ Wait-StatefulSet "rabbitmq"
 # ==============================================================
 # STEP 4: Core Banking Mock
 # ==============================================================
-Write-Host "`n[4/7] Deploy core-banking-mock..." -ForegroundColor Cyan
+Write-Host "`n[4/8] Deploy core-banking-mock..." -ForegroundColor Cyan
 kubectl apply -f k8s/apps/core-banking-mock.yaml
 Wait-Deployment "core-banking-mock"
 
 # ==============================================================
 # STEP 5: Auth Service (other services depend on it)
 # ==============================================================
-Write-Host "`n[5/7] Deploy auth-service..." -ForegroundColor Cyan
+Write-Host "`n[5/8] Deploy auth-service..." -ForegroundColor Cyan
 kubectl apply -f k8s/apps/auth-service.yaml
 Wait-Deployment "auth-service"
 
 # ==============================================================
 # STEP 6: Application services (in dependency order)
 # ==============================================================
-Write-Host "`n[6/7] Deploy application services..." -ForegroundColor Cyan
+Write-Host "`n[6/8] Deploy application services..." -ForegroundColor Cyan
 
 # Tier 1: customer, account, saving-product (depend on auth only)
 Write-Host "  -- Tier 1: customer / account / saving-product --" -ForegroundColor DarkCyan
@@ -120,7 +120,7 @@ Write-Host "  -- Tier 3: saving-transaction --" -ForegroundColor DarkCyan
 kubectl apply -f k8s/apps/saving-transaction-service.yaml
 Wait-Deployment "saving-transaction-service"
 
-# Tier 4: interest (depends on contract) — can run in parallel with transaction
+# Tier 4: interest (depends on contract) - can run in parallel with transaction
 Write-Host "  -- Tier 4: saving-interest --" -ForegroundColor DarkCyan
 kubectl apply -f k8s/apps/saving-interest-service.yaml
 Wait-Deployment "saving-interest-service"
@@ -136,12 +136,19 @@ kubectl apply -f k8s/apps/saving-notification-service.yaml
 Wait-Deployment "saving-notification-service"
 
 # ==============================================================
-# STEP 7: API Gateway + Ingress (last, after all services ready)
+# STEP 7: API Gateway + Web UI + Ingress
 # ==============================================================
-Write-Host "`n[7/7] Deploy api-gateway + Ingress..." -ForegroundColor Cyan
+Write-Host "`n[7/8] Deploy api-gateway..." -ForegroundColor Cyan
 kubectl apply -f k8s/apps/api-gateway.yaml
-kubectl apply -f k8s/apps/ingress.yaml
 Wait-Deployment "api-gateway"
+
+# ==============================================================
+# STEP 8: Web UI + Ingress (last - depends on api-gateway)
+# ==============================================================
+Write-Host "`n[8/8] Deploy saving-banking-web + Ingress..." -ForegroundColor Cyan
+kubectl apply -f k8s/apps/saving-banking-web.yaml
+kubectl apply -f k8s/apps/ingress.yaml
+Wait-Deployment "saving-banking-web"
 
 # ==============================================================
 # Summary
@@ -149,8 +156,8 @@ Wait-Deployment "api-gateway"
 Write-Host "`n============================================================" -ForegroundColor Green
 Write-Host " Deploy thanh cong!" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
-Write-Host " API Gateway  : http://localhost:3000  (NodePort)" -ForegroundColor Green
-Write-Host "             : http://localhost        (NGINX Ingress)" -ForegroundColor Green
+Write-Host " Web UI       : http://localhost:8080  (NGINX Ingress)" -ForegroundColor Green
+Write-Host " API Gateway  : http://localhost:3000  (NodePort - dev)" -ForegroundColor Green
 Write-Host " RabbitMQ UI : http://localhost:15672  (guest / guest)" -ForegroundColor Green
 Write-Host "------------------------------------------------------------" -ForegroundColor Green
 Write-Host " Xem trang thai pods:" -ForegroundColor Cyan

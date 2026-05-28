@@ -1,23 +1,29 @@
 # 🏦 Saving Banking Microservices System
 
 > **A full-stack banking microservices platform for managing savings accounts (tiền gửi tiết kiệm)**  
-> Built with **Java Spring Boot** · **Python FastAPI** · **Node.js NestJS** · **PostgreSQL** · **RabbitMQ**
+> Built with **Java Spring Boot** · **Python FastAPI** · **Node.js NestJS** · **React + Vite** · **PostgreSQL** · **RabbitMQ**
 
 ---
 
 ## 📐 Kiến trúc tổng quan
 
 ```
-                          ┌─────────────────────┐
-   Browser / Mobile App   │                     │
-          │               │   Core Banking Mock │ :8099
-          ▼               │   (CBS Integration) │
- ┌────────────────────┐   └─────────────────────┘
- │   API Gateway      │           ▲
- │   NestJS  :3000    │           │
- └────────┬───────────┘           │
-          │ JWT validation        │ CBS sync
-          ▼                       │
+ Browser / Mobile App
+        │
+        ▼
+ ┌──────────────────────┐     ┌─────────────────────┐
+ │  saving-banking-web  │     │  Core Banking Mock  │ :8099
+ │  React + Vite  :80   │     │  (CBS Integration)  │
+ │  (Nginx SPA)         │     └─────────────────────┘
+ └─────────┬────────────┘              ▲
+           │ /api/* proxy              │
+           ▼                           │ CBS sync
+ ┌────────────────────┐                │
+ │   API Gateway      │────────────────┘
+ │   NestJS  :3000    │
+ └────────┬───────────┘
+          │ JWT validation
+          ▼
  ┌──────────────────────────────────────────────────────────────┐
  │                    BUSINESS SERVICES                         │
  │                                                              │
@@ -56,6 +62,27 @@ saving-banking-microservices/
 ├── saving-lifecycle-service/     ← Python FastAPI   — APScheduler, maturity jobs
 ├── saving-notification-service/  ← Node.js NestJS   — RabbitMQ consumer, event log
 ├── core-banking-mock/            ← Python FastAPI   — CBS stub (credit/debit mock)
+├── saving-banking-web/           ← React + Vite + TypeScript — Web UI (SPA)
+│   ├── src/
+│   │   ├── pages/                ← Dashboard, Products, Contracts, Customers, ...
+│   │   ├── hooks/                ← React Query hooks
+│   │   ├── services/             ← Axios API clients
+│   │   ├── stores/               ← Zustand (auth, UI state)
+│   │   ├── types/                ← TypeScript interfaces
+│   │   └── constants/            ← Routes, config
+│   ├── Dockerfile                ← Multi-stage: node build + nginx serve
+│   └── nginx.conf                ← SPA routing + /api proxy to api-gateway
+├── k8s/
+│   ├── 00-namespace.yaml         ← Namespace: saving-banking
+│   ├── config/
+│   │   ├── configmap.yaml        ← Service URLs, app config
+│   │   └── secret.yaml           ← DB credentials, JWT secret
+│   ├── infra/
+│   │   ├── postgres/             ← StatefulSet + PVC + Service
+│   │   └── rabbitmq/             ← StatefulSet + PVC + Service
+│   ├── apps/                     ← Deployment + Service for each microservice
+│   ├── build-push.ps1            ← Build Docker images → push to Kind registry
+│   └── deploy-all.ps1            ← Full deploy pipeline (1-click)
 ├── db/
 │   ├── 01_init_schemas.sql       ← Create 9 schemas + tables + indexes
 │   └── 02_seed_data.sql          ← Test users, customers, accounts, contracts
@@ -146,10 +173,162 @@ curl http://localhost:8099/health                           # Core Banking Mock
 
 ---
 
+## 🖥️ Web UI — saving-banking-web
+
+React + Vite + TypeScript SPA dùng **Ant Design** làm component library. Chạy trong container Nginx, proxy `/api/*` sang api-gateway qua K8s DNS.
+
+### Tính năng
+
+| Trang | Mô tả | Phân quyền |
+|---|---|---|
+| Dashboard | Thống kê tổng quan, hoạt động gần đây | Tất cả |
+| Sản phẩm tiết kiệm | Danh sách, tạo/chỉnh sửa, kỳ hạn, lãi suất, chính sách tất toán sớm | ADMIN/TELLER/MANAGER |
+| Tính lãi dự kiến | Simulate lãi suất theo sản phẩm + kỳ hạn | Tất cả |
+| Tra cứu khách hàng | Tìm theo CIF/tên/CMND | ADMIN/TELLER/MANAGER |
+| Tạo tài khoản | Mở tài khoản thanh toán cho khách hàng | ADMIN/TELLER/MANAGER |
+| Mở sổ tiết kiệm | Chọn sản phẩm, kỳ hạn, tài khoản nguồn | Tất cả |
+| Sổ tiết kiệm của tôi | Xem danh sách, chi tiết, tất toán sớm | Tất cả |
+| Lịch sử giao dịch | Xem giao dịch theo tài khoản/thời gian | Tất cả |
+| Thông báo | Nhận thông báo khi mở/đóng/đáo hạn sổ | Tất cả |
+
+### Chạy development
+
+```bash
+cd saving-banking-web
+npm install
+npm run dev       # http://localhost:5173
+```
+
+> API calls tự động proxy sang `http://localhost:3000` qua `vite.config.ts`.
+
+### Build Docker image
+
+```bash
+cd saving-banking-web
+docker build -t saving-banking-web:latest .
+```
+
+**Multi-stage build:**
+1. `node:20-alpine` → cài deps, `npm run build` → `/app/dist`
+2. `nginx:alpine` → copy dist, serve SPA + proxy `/api` → api-gateway
+
+### nginx.conf (key points)
+
+```nginx
+# Static assets: cache 1 year
+location ~* \.(js|css|png|svg|woff2|...)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+}
+
+# API proxy (K8s: api-gateway:3000 via cluster DNS)
+location /api/ {
+    proxy_pass http://api-gateway:3000;
+}
+
+# SPA fallback
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
+
+---
+
+## ☸️ Deploy trên Kubernetes (Kind)
+
+Toàn bộ hệ thống có thể deploy lên **Kind** (Kubernetes in Docker) với 1 lệnh.
+
+### Yêu cầu
+
+| Công cụ | Phiên bản |
+|---|---|
+| Docker Desktop | 24.x+ |
+| Kind | 0.22+ |
+| kubectl | 1.28+ |
+| PowerShell | 5.1+ (Windows) |
+
+### Bước 1 — Tạo Kind cluster + local registry
+
+```powershell
+# Tạo cluster với port mapping 80→8080
+kind create cluster --config kind-config.yaml --name saving-banking
+
+# (Nếu chưa có registry) Tạo local registry
+docker run -d --restart=always -p 5001:5000 --name kind-registry registry:2
+docker network connect kind kind-registry
+```
+
+> `kind-config.yaml` cần khai báo `extraPortMappings: containerPort: 80 → hostPort: 8080` để Ingress hoạt động.
+
+### Bước 2 — Build và push images vào registry
+
+```powershell
+# Build tất cả services và push vào localhost:5001
+.\k8s\build-push.ps1
+```
+
+Script tự động build Docker image cho từng service và tag `localhost:5001/<name>:latest`.
+
+### Bước 3 — Deploy toàn bộ lên cluster
+
+```powershell
+# Deploy đầy đủ (NGINX Ingress + namespace + infra + apps + web)
+.\k8s\deploy-all.ps1
+
+# Bỏ qua cài NGINX Ingress nếu đã có
+.\k8s\deploy-all.ps1 -SkipIngress
+```
+
+**Thứ tự deploy trong script:**
+1. NGINX Ingress Controller
+2. Namespace `saving-banking` + ConfigMap + Secret
+3. PostgreSQL + RabbitMQ (StatefulSet)
+4. core-banking-mock
+5. auth-service
+6. Tier 1: customer / account / saving-product (song song)
+7. Tier 2: saving-contract → Tier 3: saving-transaction → Tier 4: saving-interest → Tier 5: saving-lifecycle → Tier 6: notification
+8. api-gateway → saving-banking-web + Ingress
+
+### Bước 4 — Kiểm tra
+
+```powershell
+# Xem trạng thái pods
+kubectl get pods -n saving-banking
+
+# Xem services
+kubectl get svc -n saving-banking
+
+# Logs của 1 service
+kubectl logs -n saving-banking deploy/auth-service -f
+```
+
+### Truy cập sau khi deploy
+
+| URL | Mô tả |
+|---|---|
+| http://localhost:8080 | Web UI (qua NGINX Ingress) |
+| http://localhost:3000 | API Gateway (NodePort - dev only) |
+| http://localhost:15672 | RabbitMQ Management UI (guest/guest) |
+
+### Rebuild 1 service
+
+```powershell
+# Rebuild image
+docker build -t localhost:5001/auth-service:latest ./auth-service
+docker push localhost:5001/auth-service:latest
+
+# Rolling restart
+kubectl rollout restart deployment/auth-service -n saving-banking
+kubectl rollout status deployment/auth-service -n saving-banking
+```
+
+---
+
 ## 🌐 Service Ports & URLs
 
 | Service | Port | Health URL | API Docs |
 |---|---|---|---|
+| **Web UI** | 5173 (dev) / 8080 (K8s) | — | http://localhost:5173 hoặc http://localhost:8080 |
 | **API Gateway** | 3000 | `/health` | http://localhost:3000/api/docs |
 | **Auth Service** | 8081 | `/actuator/health` | http://localhost:8081/swagger-ui.html |
 | **Customer Service** | 8082 | `/actuator/health` | http://localhost:8082/swagger-ui.html |
@@ -602,6 +781,10 @@ curl http://localhost:15672/api/overview -u guest:guest
 
 | Layer | Technology | Version |
 |---|---|---|
+| **Web UI** | React + Vite + TypeScript | 18.x / 5.x |
+| **UI Components** | Ant Design | 5.x |
+| **State Management** | Zustand | 4.x |
+| **API Client** | Axios + TanStack React Query | 1.x / 5.x |
 | Java Services | Spring Boot | 3.2.x |
 | Java ORM | Spring Data JPA + Hibernate | 6.x |
 | Java Security | Spring Security + JWT | 6.x |
@@ -614,6 +797,8 @@ curl http://localhost:15672/api/overview -u guest:guest
 | Database | PostgreSQL | 15 |
 | Message Queue | RabbitMQ | 3.12 |
 | Container | Docker + Docker Compose v2 | — |
+| Orchestration | Kubernetes (Kind) | 1.29+ |
+| Ingress | NGINX Ingress Controller | 1.x |
 | Auth | JWT HS256 | — |
 
 ---
@@ -633,6 +818,55 @@ Nếu bạn muốn extend hệ thống, implement theo thứ tự sau:
 9. `saving-notification-service` — Event consumer
 10. `saving-lifecycle-service` — Scheduled maturity jobs
 11. `api-gateway` — Last, sau khi tất cả services ready
+
+---
+
+## 📝 Changelog
+
+### v1.1.0 — Web UI + K8s deployment + Product management
+
+#### ✨ Tính năng mới
+
+**Web UI (`saving-banking-web`)**
+- Thêm toàn bộ giao diện React + Vite + TypeScript + Ant Design
+- Dashboard với thống kê tổng quan và hoạt động gần đây
+- Quản lý sản phẩm tiết kiệm: CRUD sản phẩm, kỳ hạn, lãi suất, chính sách tất toán sớm
+- Tính lãi dự kiến (simulate) theo sản phẩm và kỳ hạn
+- Tra cứu khách hàng, chi tiết tài khoản, mở sổ tiết kiệm
+- Phân quyền UI theo role: ADMIN/TELLER/MANAGER/CUSTOMER
+- Dockerfile multi-stage (node build → nginx serve) + nginx.conf (SPA + API proxy)
+
+**Kubernetes deployment**
+- Thêm `k8s/apps/saving-banking-web.yaml` — Deployment + ClusterIP Service
+- Cập nhật `k8s/apps/ingress.yaml` — `/api` → api-gateway, `/` → saving-banking-web
+- Cập nhật `k8s/build-push.ps1` — thêm saving-banking-web vào danh sách build
+- Cập nhật `k8s/deploy-all.ps1` — thêm step 8/8 deploy web + ingress
+
+**Saving Product Service (Backend)**
+- API `GET /api/v1/products?activeOnly=false` — admin lấy tất cả sản phẩm (kể cả vô hiệu hóa)
+- API `GET /api/v1/products/{code}/terms?activeOnly=false` — lấy tất cả kỳ hạn
+- Thêm endpoint bật/tắt kỳ hạn (`PATCH /terms/{id}/toggle`)
+- Thêm endpoint upsert chính sách tất toán sớm (`PUT /terms/{id}/early-withdrawal`)
+- Thêm kiểm tra trùng lặp lãi suất: cùng `(termId, effectiveFrom)` bị từ chối
+
+#### 🐛 Bug fixes
+
+| Bug | Nguyên nhân | Giải pháp |
+|---|---|---|
+| EarlyWithdrawalModal: `penaltyRate` ẩn sai | Logic `hidden` bị đảo ngược | Sử dụng `hidden` prop + dynamic `required` rules |
+| Crash `/products/{code}`: "terms is not defined" | Biến `terms` bị đổi tên thành `allTerms` nhưng còn 1 chỗ cũ | Cập nhật tham chiếu còn sót |
+| Tab "Tất cả" và "Đang hoạt động" hiển thị cùng số | Backend luôn trả `activeOnly=true` | Thêm param `activeOnly` backend; admin gọi 2 query song song |
+| Kỳ hạn bị vô hiệu hóa không thể bật lại | `useProductTerms` chỉ fetch kỳ hạn active | Thêm `useAllProductTerms` (activeOnly=false) cho bảng kỳ hạn |
+| Lãi suất trùng ngày hiệu lực cho cùng kỳ hạn | Không có validation | Thêm kiểm tra service-layer + DB `@UniqueConstraint` |
+| Docker build lỗi TypeScript | `InputNumber<0>`, unused imports, KYC cast | Explicit generic `<InputNumber<number>>`, xóa imports thừa |
+| PowerShell ParseException ở deploy-all.ps1 | Em dash `—` (UTF-8 multi-byte) | Thay thế bằng dấu gạch ngang ASCII `-` |
+| Ant Design Menu type conflict | Custom `MenuItem` interface | Strip custom props trước khi truyền vào `items` |
+
+#### 🔑 Thiết kế quan trọng
+
+- **Admin role gate**: `saving-product-service` kiểm tra JWT role tại controller; non-admin luôn nhận `activeOnly=true` dù không truyền param
+- **Interest rate immutability**: Lịch sử lãi suất là append-only; unique constraint `(product_code, term_id, effective_from)` đảm bảo không trùng
+- **K8s access flow**: Browser → `localhost:8080` → Kind port mapping → NGINX Ingress → `/api` → api-gateway `:3000` / `/` → saving-banking-web `:80` → Nginx SPA → (nội bộ) proxy `/api` → api-gateway qua K8s DNS
 
 ---
 

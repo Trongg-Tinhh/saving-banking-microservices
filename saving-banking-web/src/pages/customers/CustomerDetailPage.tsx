@@ -16,7 +16,6 @@ import {
   Table,
   Row,
   Col,
-  Divider,
   Tooltip,
   Modal,
   message,
@@ -232,12 +231,12 @@ export default function CustomerDetailPage() {
   }
 
   const kycCfg = customer.kycStatus
-    ? (KYC_STATUS_CONFIG as Record<string, typeof KYC_STATUS_CONFIG['VERIFIED']>)[customer.kycStatus]
+    ? (KYC_STATUS_CONFIG as unknown as Record<string, typeof KYC_STATUS_CONFIG['VERIFIED']>)[customer.kycStatus]
     : null;
 
   // ── Contact form fields (reusable) ────────────────────────────
 
-  const renderContactFields = (size: 'middle' | 'large' = 'large') => (
+  const renderContactFields = (_size: 'middle' | 'large' = 'large') => (
     <Row gutter={12}>
       <Col xs={24} sm={12}>
         <Form.Item name="phoneNumber" label={<><PhoneOutlined /> Số điện thoại</>}

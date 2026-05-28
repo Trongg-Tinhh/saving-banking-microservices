@@ -1,0 +1,63 @@
+# ==============================================================
+# saving-banking-web  —  React SPA served by Nginx
+# Truy cập: http://localhost:8080  (qua NGINX Ingress)
+# ==============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: saving-banking-web
+  namespace: saving-banking
+  labels:
+    app: saving-banking-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: saving-banking-web
+  template:
+    metadata:
+      labels:
+        app: saving-banking-web
+    spec:
+      containers:
+        - name: saving-banking-web
+          image: localhost:5001/saving-banking-web:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "20m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: saving-banking-web
+  namespace: saving-banking
+  labels:
+    app: saving-banking-web
+spec:
+  selector:
+    app: saving-banking-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

@@ -1,11 +1,11 @@
 # ==============================================================
-# NGINX Ingress – routes localhost:80 → api-gateway:3000
-# Requires NGINX Ingress Controller installed in the cluster.
-# deploy-all.ps1 installs it automatically.
+# NGINX Ingress — routing qua localhost:8080
 #
-# Access pattern (both work):
-#   http://localhost        → api-gateway (via Ingress, port 80)
-#   http://localhost:3000   → api-gateway (via NodePort)
+#  localhost:8080/api/*  → api-gateway:3000   (backend)
+#  localhost:8080/*      → saving-banking-web:80  (React SPA)
+#
+# NodePort vẫn còn hoạt động độc lập:
+#  localhost:3000        → api-gateway trực tiếp (dev/test)
 # ==============================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,18 +13,29 @@ metadata:
   name: saving-banking-ingress
   namespace: saving-banking
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-body-size:    "10m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # Loại bỏ prefix /api khi chuyển đến api-gateway — KHÔNG dùng rewrite
+    # api-gateway đã mount tại /api/v1/... nên giữ nguyên path
 spec:
   ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /
+          # ── /api/* → api-gateway (đặt trước / để match ưu tiên cao hơn)
+          - path: /api
             pathType: Prefix
             backend:
               service:
                 name: api-gateway
                 port:
                   number: 3000
+          # ── /* → React SPA
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: saving-banking-web
+                port:
+                  number: 80

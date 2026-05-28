@@ -37,12 +37,18 @@ const TX_LABELS: Record<TransactionType, string> = {
   OPEN_SAVING:      'Mở sổ',
   CLOSE_SAVING:     'Tất toán',
   INTEREST_PAYMENT: 'Trả lãi',
+  DEBIT:            'Ghi nợ',
+  CREDIT:           'Ghi có',
+  INTEREST:         'Lãi suất',
 };
 
 const TX_COLORS: Record<TransactionType, string> = {
   OPEN_SAVING:      'green',
   CLOSE_SAVING:     'red',
   INTEREST_PAYMENT: 'blue',
+  DEBIT:            'orange',
+  CREDIT:           'cyan',
+  INTEREST:         'purple',
 };
 
 // ─── Near-maturity table ──────────────────────────────────────────

@@ -237,12 +237,12 @@ export default function ProductFormPage() {
                     }),
                   ]}
                 >
-                  <InputNumber
+                  <InputNumber<number>
                     style={{ width: '100%' }}
                     min={0}
                     step={1_000_000}
                     formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}
-                    parser={(v) => (Number(v?.replace(/\./g, '') ?? 0) as unknown) as 1}
+                    parser={(v) => Number(v?.replace(/\./g, '') ?? 0)}
                     addonAfter="₫"
                     placeholder="1.000.000"
                   />
@@ -264,12 +264,12 @@ export default function ProductFormPage() {
                     }),
                   ]}
                 >
-                  <InputNumber
+                  <InputNumber<number>
                     style={{ width: '100%' }}
                     min={0}
                     step={100_000_000}
                     formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}
-                    parser={(v) => (Number(v?.replace(/\./g, '') ?? 0) as unknown) as 1}
+                    parser={(v) => Number(v?.replace(/\./g, '') ?? 0)}
                     addonAfter="₫"
                     placeholder="10.000.000.000"
                   />

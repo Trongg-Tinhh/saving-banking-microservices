@@ -24,7 +24,6 @@ import { dayjs } from '@/utils/formatDate';
 import { ROUTES, buildPath } from '@/constants/routes';
 import { useAuthStore } from '@/stores/authStore';
 import { useAccountBalance } from '@/hooks/useAccounts';
-import { accountService } from '@/services/accountService';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiResponse } from '@/types/api.types';
 import api from '@/services/api';

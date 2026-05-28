@@ -26,7 +26,8 @@ $services = @(
     @{ name = "saving-interest-service";     context = "saving-interest-service" },
     @{ name = "saving-lifecycle-service";    context = "saving-lifecycle-service" },
     @{ name = "saving-notification-service"; context = "saving-notification-service" },
-    @{ name = "api-gateway";                 context = "api-gateway" }
+    @{ name = "api-gateway";                 context = "api-gateway" },
+    @{ name = "saving-banking-web";          context = "saving-banking-web" }
 )
 
 # Loc neu chi build 1 service

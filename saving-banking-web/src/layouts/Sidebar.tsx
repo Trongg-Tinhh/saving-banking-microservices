@@ -104,15 +104,17 @@ export default function Sidebar() {
   const { hasAnyRole } = useAuthStore();
   const [selectedKey, setSelectedKey] = useState(location.pathname);
 
-  // Filter menu items based on role
+  // Filter menu items based on role, then strip custom props for Ant Design Menu
   const menuItems = useMemo(() => {
     const isStaff    = hasAnyRole('ADMIN', 'TELLER', 'MANAGER');
     const isCustomer = hasAnyRole('CUSTOMER');
-    return ALL_MENU_ITEMS.filter((item) => {
-      if (item.staffOnly    && !isStaff)    return false;
-      if (item.customerOnly && !isCustomer) return false;
-      return true;
-    });
+    return ALL_MENU_ITEMS
+      .filter((item) => {
+        if (item.staffOnly    && !isStaff)    return false;
+        if (item.customerOnly && !isCustomer) return false;
+        return true;
+      })
+      .map(({ key, icon, label }) => ({ key, icon, label }));
   }, [hasAnyRole]);
 
   // Sync selected menu item with current route
