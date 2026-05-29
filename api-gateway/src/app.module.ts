@@ -10,6 +10,8 @@ import { JwtAuthGuard } from './common/jwt-auth.guard';
 import { ProxyService } from './proxy/proxy.service';
 import { ProxyController } from './proxy/proxy.controller';
 import { HealthController } from './health/health.controller';
+import { SwaggerAggregatorService } from './swagger/swagger-aggregator.service';
+import { SwaggerAggregatorController } from './swagger/swagger-aggregator.controller';
 
 @Module({
   imports: [
@@ -32,10 +34,11 @@ import { HealthController } from './health/health.controller';
     }),
   ],
 
-  controllers: [HealthController, ProxyController],
+  controllers: [HealthController, SwaggerAggregatorController, ProxyController],
 
   providers: [
     ProxyService,
+    SwaggerAggregatorService,
     JwtAuthGuard,
     {
       provide: APP_GUARD,

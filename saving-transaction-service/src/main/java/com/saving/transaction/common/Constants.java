@@ -31,6 +31,9 @@ public final class Constants {
         public static final String FAILED  = "FAILED";
     }
 
+    // ── MDC keys ──────────────────────────────────────────────────────────
+    public static final String MDC_USERNAME_KEY = "username";
+
     // ── RabbitMQ — Consuming from contract-service ────────────────────────
     public static final class Rabbit {
         private Rabbit() {}

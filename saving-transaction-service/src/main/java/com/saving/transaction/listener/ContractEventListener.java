@@ -15,13 +15,12 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Listens to saving.contract.events and records corresponding transactions.
  *
- * CONTRACT_OPENED → DEBIT from source account (principal deposited)
- * CONTRACT_CLOSED → CREDIT to source account (principal + interest returned)
+ * CONTRACT_OPENED  → DEBIT from source account (principal deposited)
+ * CONTRACT_CLOSED  → CREDIT + INTEREST to source account (payout)
  * CONTRACT_MATURED → informational only, no monetary movement
  */
 @Slf4j
@@ -39,28 +38,30 @@ public class ContractEventListener {
         String correlationId = getStr(payload, "correlationId");
         if (correlationId != null) MDC.put("correlationId", correlationId);
 
-        String contractNo  = getStr(payload, "contractNo");
-        String txRef       = "CONTRACT-OPEN-" + contractNo;
-        log.info("[{}] Received CONTRACT_OPENED event for {}", correlationId, contractNo);
+        String contractNo = getStr(payload, "contractNo");
+        String cif        = getStr(payload, "cif");
+        Object amount     = payload.get("principalAmount");
+        String txRef      = "CONTRACT-OPEN-" + contractNo;
 
+        log.info("[CONTRACT_OPENED_EVENT] received: contractNo={} cif={} principal={} ref={}",
+                contractNo, cif, amount, txRef);
         try {
             RecordTransactionRequest req = new RecordTransactionRequest();
             req.setTransactionRef(txRef);
             req.setAccountNo(getStr(payload, "sourceAccountNo"));
-            req.setCif(getStr(payload, "cif"));
+            req.setCif(cif);
             req.setTransactionType(Constants.TxType.DEBIT);
-            req.setAmount(parseBigDecimal(payload.get("principalAmount")));
+            req.setAmount(parseBigDecimal(amount));
             req.setCurrency(getStr(payload, "currency"));
             req.setDescription("Contract opening deposit — " + contractNo);
             req.setContractNo(contractNo);
 
             transactionService.recordTransaction(req);
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+            log.info("[CONTRACT_OPENED_EVENT] SUCCESS: contractNo={} DEBIT recorded", contractNo);
 
         } catch (Exception ex) {
-            log.error("[{}] Failed to process CONTRACT_OPENED for {}: {}",
-                    correlationId, contractNo, ex.getMessage(), ex);
-            // Nack without requeue — goes to DLQ
+            log.error("[CONTRACT_OPENED_EVENT] FAILED: contractNo={} reason={}", contractNo, ex.getMessage(), ex);
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
         } finally {
             MDC.remove("correlationId");
@@ -74,34 +75,40 @@ public class ContractEventListener {
         String correlationId = getStr(payload, "correlationId");
         if (correlationId != null) MDC.put("correlationId", correlationId);
 
-        String contractNo = getStr(payload, "contractNo");
-        String txRef      = "CONTRACT-CLOSE-" + contractNo;
-        log.info("[{}] Received CONTRACT_CLOSED event for {}", correlationId, contractNo);
+        String contractNo    = getStr(payload, "contractNo");
+        String cif           = getStr(payload, "cif");
+        Object totalPayout   = payload.get("totalPayout");
+        Object interestEarned = payload.get("interestEarned");
+        String closeType     = getStr(payload, "closeType");
+        String txRef         = "CONTRACT-CLOSE-" + contractNo;
 
+        log.info("[CONTRACT_CLOSED_EVENT] received: contractNo={} cif={} payout={} interest={} type={} ref={}",
+                contractNo, cif, totalPayout, interestEarned, closeType, txRef);
         try {
             // Credit transaction — total payout (principal + interest)
             RecordTransactionRequest req = new RecordTransactionRequest();
             req.setTransactionRef(txRef);
             req.setAccountNo(getStr(payload, "sourceAccountNo"));
-            req.setCif(getStr(payload, "cif"));
+            req.setCif(cif);
             req.setTransactionType(Constants.TxType.CREDIT);
-            req.setAmount(parseBigDecimal(payload.get("totalPayout")));
+            req.setAmount(parseBigDecimal(totalPayout));
             req.setCurrency(getStr(payload, "currency"));
-            req.setDescription("Contract payout — " + contractNo
-                    + " (" + getStr(payload, "closeType") + ")");
+            req.setDescription("Contract payout — " + contractNo + " (" + closeType + ")");
             req.setContractNo(contractNo);
-
             transactionService.recordTransaction(req);
 
-            // Also record a separate INTEREST transaction for the interest portion
-            BigDecimal interestEarned = parseBigDecimal(payload.get("interestEarned"));
-            if (interestEarned != null && interestEarned.compareTo(BigDecimal.ZERO) > 0) {
+            // Separate INTEREST transaction for the interest portion
+            BigDecimal interest = parseBigDecimal(interestEarned);
+            if (interest != null && interest.compareTo(BigDecimal.ZERO) > 0) {
+                String interestRef = "CONTRACT-INTEREST-" + contractNo;
+                log.info("[CONTRACT_CLOSED_EVENT] recording INTEREST transaction: ref={} amount={}",
+                        interestRef, interest);
                 RecordTransactionRequest interestReq = new RecordTransactionRequest();
-                interestReq.setTransactionRef("CONTRACT-INTEREST-" + contractNo);
+                interestReq.setTransactionRef(interestRef);
                 interestReq.setAccountNo(getStr(payload, "sourceAccountNo"));
-                interestReq.setCif(getStr(payload, "cif"));
+                interestReq.setCif(cif);
                 interestReq.setTransactionType(Constants.TxType.INTEREST);
-                interestReq.setAmount(interestEarned);
+                interestReq.setAmount(interest);
                 interestReq.setCurrency(getStr(payload, "currency"));
                 interestReq.setDescription("Interest payout — " + contractNo);
                 interestReq.setContractNo(contractNo);
@@ -109,10 +116,10 @@ public class ContractEventListener {
             }
 
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+            log.info("[CONTRACT_CLOSED_EVENT] SUCCESS: contractNo={} CREDIT+INTEREST recorded", contractNo);
 
         } catch (Exception ex) {
-            log.error("[{}] Failed to process CONTRACT_CLOSED for {}: {}",
-                    correlationId, contractNo, ex.getMessage(), ex);
+            log.error("[CONTRACT_CLOSED_EVENT] FAILED: contractNo={} reason={}", contractNo, ex.getMessage(), ex);
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
         } finally {
             MDC.remove("correlationId");
@@ -122,12 +129,12 @@ public class ContractEventListener {
     @RabbitListener(queues = Constants.Rabbit.TX_CONTRACT_MATURED_QUEUE, ackMode = "MANUAL")
     public void onContractMatured(Map<String, Object> payload, Message message, Channel channel)
             throws IOException {
-        // Informational — no monetary movement at maturity, just log it
         String contractNo    = getStr(payload, "contractNo");
         String correlationId = getStr(payload, "correlationId");
-        log.info("[{}] CONTRACT_MATURED received for {} — no transaction recorded",
-                correlationId, contractNo);
+        if (correlationId != null) MDC.put("correlationId", correlationId);
+        log.info("[CONTRACT_MATURED_EVENT] received: contractNo={} — no monetary movement", contractNo);
         channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
+        MDC.remove("correlationId");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

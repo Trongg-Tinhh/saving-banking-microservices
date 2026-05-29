@@ -1,5 +1,6 @@
 package com.saving.transaction.filter;
 
+import com.saving.transaction.common.Constants;
 import com.saving.transaction.service.JwtService;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -8,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -50,8 +52,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         : Collections.emptyList();
                 SecurityContextHolder.getContext().setAuthentication(
                         new UsernamePasswordAuthenticationToken(claims.getSubject(), null, authorities));
+
+                MDC.put(Constants.MDC_USERNAME_KEY, claims.getSubject());
+                log.info("JWT auth OK: user={} role={} path={}",
+                        claims.getSubject(), role, request.getRequestURI());
             } catch (Exception ex) {
-                log.warn("JWT parsing failed: {}", ex.getMessage());
+                log.warn("JWT parsing failed for path {}: {}", request.getRequestURI(), ex.getMessage());
             }
         }
         chain.doFilter(request, response);

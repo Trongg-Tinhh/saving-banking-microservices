@@ -31,13 +31,16 @@ public class SavingProductService {
 
     @Transactional(readOnly = true)
     public List<SavingProductResponse> listProducts(boolean activeOnly) {
+        log.info("[LIST_PRODUCTS] activeOnly={}", activeOnly);
+
         List<SavingProduct> products = activeOnly
                 ? productRepository.findByIsActiveTrueOrderByProductCodeAsc()
                 : productRepository.findAllByOrderByProductCodeAsc();
 
+        log.info("[LIST_PRODUCTS] found {} product(s)", products.size());
+
         return products.stream().map(p -> {
             SavingProductResponse resp = SavingProductResponse.from(p);
-            // Attach active terms with current rates
             List<SavingTermResponse> terms = termRepository
                     .findByProduct_ProductCodeAndIsActiveTrueOrderByTermMonthsAsc(p.getProductCode())
                     .stream().map(SavingTermResponse::from).collect(Collectors.toList());
@@ -50,12 +53,16 @@ public class SavingProductService {
 
     @Transactional(readOnly = true)
     public SavingProductResponse getProduct(String productCode) {
+        log.info("[GET_PRODUCT] productCode={}", productCode);
+
         SavingProduct product = productRepository.findByProductCodeWithActiveTerms(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[GET_PRODUCT] NOT FOUND productCode={}", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
 
         SavingProductResponse resp = SavingProductResponse.from(product);
 
-        // Active terms with current rates
         LocalDate today = LocalDate.now();
         List<SavingTermResponse> terms = termRepository
                 .findByProduct_ProductCodeAndIsActiveTrueOrderByTermMonthsAsc(productCode)
@@ -67,15 +74,15 @@ public class SavingProductService {
                 }).collect(Collectors.toList());
         resp.setTerms(terms);
 
-        // Current rates
         List<InterestRateResponse> currentRates = rateRepository.findCurrentRates(productCode)
                 .stream().map(InterestRateResponse::from).collect(Collectors.toList());
         resp.setCurrentRates(currentRates);
 
-        // Early withdrawal policy
         policyRepository.findByProduct_ProductCode(productCode)
                 .ifPresent(p -> resp.setEarlyWithdrawalPolicy(EarlyWithdrawalPolicyResponse.from(p)));
 
+        log.info("[GET_PRODUCT] OK productCode={} name='{}' terms={} rates={}",
+                productCode, product.getProductName(), terms.size(), currentRates.size());
         return resp;
     }
 
@@ -83,10 +90,16 @@ public class SavingProductService {
 
     @Transactional
     public SavingProductResponse createProduct(CreateProductRequest request) {
+        log.info("[CREATE_PRODUCT] Step 1/3 — checking uniqueness: productCode='{}'", request.getProductCode());
+
         if (productRepository.existsByProductCode(request.getProductCode())) {
+            log.warn("[CREATE_PRODUCT] FAILED — productCode='{}' already exists", request.getProductCode());
             throw new BusinessException(ErrorCode.PRODUCT_ALREADY_EXISTS,
                     "productCode=" + request.getProductCode());
         }
+
+        log.info("[CREATE_PRODUCT] Step 2/3 — building product: name='{}' currency={} ipm={}",
+                request.getProductName(), request.getCurrency(), request.getInterestPaymentMethod());
 
         SavingProduct product = SavingProduct.builder()
                 .productCode(request.getProductCode())
@@ -100,7 +113,8 @@ public class SavingProductService {
                 .build();
 
         product = productRepository.save(product);
-        log.info("Saving product created: productCode={}", request.getProductCode());
+        log.info("[CREATE_PRODUCT] Step 3/3 — SUCCESS: productCode='{}' id={}",
+                product.getProductCode(), product.getProductCode());
         return SavingProductResponse.from(product);
     }
 
@@ -108,17 +122,35 @@ public class SavingProductService {
 
     @Transactional
     public SavingProductResponse updateProduct(String productCode, UpdateProductRequest request) {
-        SavingProduct product = productRepository.findById(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode));
+        log.info("[UPDATE_PRODUCT] Step 1/2 — loading productCode='{}'", productCode);
 
-        if (StringUtils.hasText(request.getProductName()))  product.setProductName(request.getProductName());
-        if (request.getMinAmount() != null)                 product.setMinAmount(request.getMinAmount());
-        if (request.getMaxAmount() != null)                 product.setMaxAmount(request.getMaxAmount());
-        if (request.getIsActive() != null)                  product.setIsActive(request.getIsActive());
-        if (request.getDescription() != null)               product.setDescription(request.getDescription());
+        SavingProduct product = productRepository.findById(productCode)
+                .orElseThrow(() -> {
+                    log.warn("[UPDATE_PRODUCT] FAILED — productCode='{}' not found", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
+
+        // Apply partial updates and log what changed
+        if (StringUtils.hasText(request.getProductName())) {
+            log.info("[UPDATE_PRODUCT] name: '{}' → '{}'", product.getProductName(), request.getProductName());
+            product.setProductName(request.getProductName());
+        }
+        if (request.getMinAmount() != null) {
+            log.info("[UPDATE_PRODUCT] minAmount: {} → {}", product.getMinAmount(), request.getMinAmount());
+            product.setMinAmount(request.getMinAmount());
+        }
+        if (request.getMaxAmount() != null) {
+            log.info("[UPDATE_PRODUCT] maxAmount: {} → {}", product.getMaxAmount(), request.getMaxAmount());
+            product.setMaxAmount(request.getMaxAmount());
+        }
+        if (request.getIsActive() != null) {
+            log.info("[UPDATE_PRODUCT] isActive: {} → {}", product.getIsActive(), request.getIsActive());
+            product.setIsActive(request.getIsActive());
+        }
+        if (request.getDescription() != null) product.setDescription(request.getDescription());
 
         product = productRepository.save(product);
-        log.info("Saving product updated: productCode={}", productCode);
+        log.info("[UPDATE_PRODUCT] Step 2/2 — SUCCESS: productCode='{}'", productCode);
         return SavingProductResponse.from(product);
     }
 
@@ -145,13 +177,22 @@ public class SavingProductService {
 
     @Transactional
     public SavingTermResponse createTerm(String productCode, CreateTermRequest request) {
+        log.info("[CREATE_TERM] Step 1/3 — productCode='{}' termId='{}' months={} days={}",
+                productCode, request.getTermId(), request.getTermMonths(), request.getTermDays());
+
         SavingProduct product = productRepository.findById(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[CREATE_TERM] FAILED — productCode='{}' not found", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
 
         if (termRepository.existsByTermIdAndProduct_ProductCode(request.getTermId(), productCode)) {
+            log.warn("[CREATE_TERM] FAILED — termId='{}' already exists in productCode='{}'",
+                    request.getTermId(), productCode);
             throw new BusinessException(ErrorCode.TERM_ALREADY_EXISTS, "termId=" + request.getTermId());
         }
 
+        log.info("[CREATE_TERM] Step 2/3 — persisting term '{}'", request.getTermLabel());
         SavingTerm term = SavingTerm.builder()
                 .termId(request.getTermId())
                 .product(product)
@@ -162,7 +203,7 @@ public class SavingProductService {
                 .build();
 
         term = termRepository.save(term);
-        log.info("Term created: productCode={}, termId={}", productCode, request.getTermId());
+        log.info("[CREATE_TERM] Step 3/3 — SUCCESS: productCode='{}' termId='{}'", productCode, term.getTermId());
         return SavingTermResponse.from(term);
     }
 
@@ -170,21 +211,27 @@ public class SavingProductService {
 
     @Transactional
     public SavingTermResponse updateTerm(String productCode, String termId, UpdateTermRequest request) {
+        log.info("[UPDATE_TERM] productCode='{}' termId='{}'", productCode, termId);
         ensureProductExists(productCode);
 
         SavingTerm term = termRepository.findByTermIdAndProduct_ProductCode(termId, productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.TERM_NOT_FOUND,
-                        "termId=" + termId + " in product=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[UPDATE_TERM] FAILED — termId='{}' not found in productCode='{}'", termId, productCode);
+                    return new BusinessException(ErrorCode.TERM_NOT_FOUND,
+                            "termId=" + termId + " in product=" + productCode);
+                });
 
         if (org.springframework.util.StringUtils.hasText(request.getTermLabel())) {
+            log.info("[UPDATE_TERM] label: '{}' → '{}'", term.getTermLabel(), request.getTermLabel());
             term.setTermLabel(request.getTermLabel());
         }
         if (request.getIsActive() != null) {
+            log.info("[UPDATE_TERM] isActive: {} → {}", term.getIsActive(), request.getIsActive());
             term.setIsActive(request.getIsActive());
         }
 
         term = termRepository.save(term);
-        log.info("Term updated: productCode={}, termId={}, isActive={}", productCode, termId, term.getIsActive());
+        log.info("[UPDATE_TERM] SUCCESS: productCode='{}' termId='{}' isActive={}", productCode, termId, term.getIsActive());
         return SavingTermResponse.from(term);
     }
 
@@ -203,22 +250,36 @@ public class SavingProductService {
 
     @Transactional
     public InterestRateResponse addRateConfig(String productCode, CreateRateConfigRequest request) {
+        log.info("[ADD_RATE] Step 1/3 — productCode='{}' termId='{}' rate={}% from={} to={}",
+                productCode, request.getTermId(), request.getAnnualRate(),
+                request.getEffectiveFrom(), request.getEffectiveTo());
+
         SavingProduct product = productRepository.findById(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[ADD_RATE] FAILED — productCode='{}' not found", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
 
         SavingTerm term = termRepository.findByTermIdAndProduct_ProductCode(request.getTermId(), productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.TERM_NOT_FOUND,
-                        "termId=" + request.getTermId() + " in product=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[ADD_RATE] FAILED — termId='{}' not found in productCode='{}'",
+                            request.getTermId(), productCode);
+                    return new BusinessException(ErrorCode.TERM_NOT_FOUND,
+                            "termId=" + request.getTermId() + " in product=" + productCode);
+                });
 
-        // Validate dates
+        log.info("[ADD_RATE] Step 2/3 — validating date range and duplicate check");
+
         if (request.getEffectiveTo() != null && !request.getEffectiveTo().isAfter(request.getEffectiveFrom())) {
-            throw new BusinessException(ErrorCode.RATE_DATE_INVALID,
-                    "effectiveTo must be after effectiveFrom");
+            log.warn("[ADD_RATE] FAILED — effectiveTo {} is not after effectiveFrom {}",
+                    request.getEffectiveTo(), request.getEffectiveFrom());
+            throw new BusinessException(ErrorCode.RATE_DATE_INVALID, "effectiveTo must be after effectiveFrom");
         }
 
-        // Prevent duplicate: same term + same effectiveFrom → ambiguous rate lookup
         if (rateRepository.existsByProduct_ProductCodeAndTerm_TermIdAndEffectiveFrom(
                 productCode, request.getTermId(), request.getEffectiveFrom())) {
+            log.warn("[ADD_RATE] FAILED — duplicate rate for termId='{}' on effectiveFrom={}",
+                    request.getTermId(), request.getEffectiveFrom());
             throw new BusinessException(ErrorCode.RATE_DATE_CONFLICT,
                     "A rate for termId=" + request.getTermId()
                     + " already starts on " + request.getEffectiveFrom()
@@ -235,9 +296,9 @@ public class SavingProductService {
                 .build();
 
         config = rateRepository.save(config);
-        log.info("Rate config added: productCode={}, termId={}, rate={}%, from={}, to={}",
-                productCode, request.getTermId(), request.getAnnualRate(),
-                request.getEffectiveFrom(), request.getEffectiveTo());
+        log.info("[ADD_RATE] Step 3/3 — SUCCESS: productCode='{}' termId='{}' rate={}% from={} to={}",
+                productCode, request.getTermId(), config.getAnnualRate(),
+                config.getEffectiveFrom(), config.getEffectiveTo());
         return InterestRateResponse.from(config);
     }
 
@@ -257,11 +318,16 @@ public class SavingProductService {
     public EarlyWithdrawalPolicyResponse upsertEarlyWithdrawalPolicy(
             String productCode, UpsertEarlyWithdrawalPolicyRequest request) {
 
-        SavingProduct product = productRepository.findById(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND,
-                        "productCode=" + productCode));
+        log.info("[UPSERT_POLICY] productCode='{}' minDays={} penaltyRate={}% useDemandRate={}",
+                productCode, request.getMinDaysHeld(), request.getPenaltyRate(), request.getUseDemandRate());
 
-        // Find existing policy or create a new one (upsert)
+        SavingProduct product = productRepository.findById(productCode)
+                .orElseThrow(() -> {
+                    log.warn("[UPSERT_POLICY] FAILED — productCode='{}' not found", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
+
+        boolean isNew = policyRepository.findByProduct_ProductCode(productCode).isEmpty();
         EarlyWithdrawalPolicy policy = policyRepository.findByProduct_ProductCode(productCode)
                 .orElse(EarlyWithdrawalPolicy.builder().product(product).build());
 
@@ -271,7 +337,8 @@ public class SavingProductService {
         policy.setDemandRate(request.getDemandRate());
 
         policy = policyRepository.save(policy);
-        log.info("Early withdrawal policy upserted: productCode={}", productCode);
+        log.info("[UPSERT_POLICY] SUCCESS ({}) productCode='{}' penaltyRate={}%",
+                isNew ? "created" : "updated", productCode, policy.getPenaltyRate());
         return EarlyWithdrawalPolicyResponse.from(policy);
     }
 
@@ -295,32 +362,40 @@ public class SavingProductService {
     @Transactional(readOnly = true)
     public ProductRateQueryResponse queryProductRate(String productCode, String termId,
                                                      LocalDate effectiveDate) {
-        // Resolve to today if not provided
         LocalDate resolvedDate = effectiveDate != null ? effectiveDate : LocalDate.now();
+        log.info("[INTERNAL_RATE] productCode='{}' termId='{}' effectiveDate={}", productCode, termId, resolvedDate);
 
         SavingProduct product = productRepository.findById(productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[INTERNAL_RATE] FAILED — productCode='{}' not found", productCode);
+                    return new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "productCode=" + productCode);
+                });
 
         if (!Boolean.TRUE.equals(product.getIsActive())) {
+            log.warn("[INTERNAL_RATE] FAILED — productCode='{}' is inactive", productCode);
             throw new BusinessException(ErrorCode.PRODUCT_INACTIVE, "productCode=" + productCode);
         }
 
         SavingTerm term = termRepository.findByTermIdAndProduct_ProductCode(termId, productCode)
-                .orElseThrow(() -> new BusinessException(ErrorCode.TERM_NOT_FOUND,
-                        "termId=" + termId + " in product=" + productCode));
+                .orElseThrow(() -> {
+                    log.warn("[INTERNAL_RATE] FAILED — termId='{}' not found in productCode='{}'", termId, productCode);
+                    return new BusinessException(ErrorCode.TERM_NOT_FOUND,
+                            "termId=" + termId + " in product=" + productCode);
+                });
 
         if (!Boolean.TRUE.equals(term.getIsActive())) {
+            log.warn("[INTERNAL_RATE] FAILED — termId='{}' is inactive", termId);
             throw new BusinessException(ErrorCode.TERM_INACTIVE, "termId=" + termId);
         }
 
         InterestRateConfig rate = rateRepository.findEffectiveRate(productCode, termId, resolvedDate)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RATE_NOT_FOUND,
-                        "No rate for product=" + productCode + ", term=" + termId + ", date=" + resolvedDate));
+                .orElseThrow(() -> {
+                    log.warn("[INTERNAL_RATE] FAILED — no effective rate for productCode='{}' termId='{}' date={}",
+                            productCode, termId, resolvedDate);
+                    return new BusinessException(ErrorCode.RATE_NOT_FOUND,
+                            "No rate for product=" + productCode + ", term=" + termId + ", date=" + resolvedDate);
+                });
 
-        // Validate amount if provided
-        // (amount validation happens in saving-contract-service, but product limits are checked here)
-
-        // Early withdrawal policy
         EarlyWithdrawalPolicy policy = policyRepository.findByProduct_ProductCode(productCode).orElse(null);
 
         ProductRateQueryResponse.ProductRateQueryResponseBuilder builder = ProductRateQueryResponse.builder()
@@ -344,7 +419,10 @@ public class SavingProductService {
                    .earlyWithdrawalMinDaysHeld(policy.getMinDaysHeld());
         }
 
-        return builder.build();
+        ProductRateQueryResponse resp = builder.build();
+        log.info("[INTERNAL_RATE] OK productCode='{}' termId='{}' rate={}% from={} to={}",
+                productCode, termId, rate.getAnnualRate(), rate.getEffectiveFrom(), rate.getEffectiveTo());
+        return resp;
     }
 
     // ── Private helpers ────────────────────────────────────────────

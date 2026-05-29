@@ -49,33 +49,37 @@ public class AuthService {
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        log.info("Login attempt for username: {}", request.getUsername());
+        String username = request.getUsername();
+        log.info("[LOGIN] Step 1/5 — authenticating user '{}'", username);
 
-        // 1. Authenticate
-        Authentication auth;
+        // 1. Authenticate via Spring Security
         try {
-            auth = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(
-                            request.getUsername(), request.getPassword()));
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(username, request.getPassword()));
         } catch (BadCredentialsException ex) {
-            log.warn("Bad credentials for user: {}", request.getUsername());
+            log.warn("[LOGIN] FAILED — bad credentials for user '{}'", username);
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
 
         // 2. Load user with roles
-        User user = userRepository.findByUsernameWithRoles(request.getUsername())
+        log.info("[LOGIN] Step 2/5 — loading user record for '{}'", username);
+        User user = userRepository.findByUsernameWithRoles(username)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         List<String> roles = user.getUserRoles().stream()
                 .map(ur -> ur.getRole().getRoleCode())
                 .collect(Collectors.toList());
+        log.info("[LOGIN] Step 2/5 — user loaded: id={} cif={} roles={} status={}",
+                user.getUserId(), user.getCif(), roles, user.getStatus());
 
         // 3. Generate tokens
+        log.info("[LOGIN] Step 3/5 — generating JWT tokens");
         String userId = user.getUserId().toString();
-        String accessToken  = jwtService.generateAccessToken(userId, user.getUsername(), user.getCif(), roles);
-        String refreshToken = jwtService.generateRefreshToken(userId, user.getUsername());
+        String accessToken  = jwtService.generateAccessToken(userId, username, user.getCif(), roles);
+        String refreshToken = jwtService.generateRefreshToken(userId, username);
 
-        // 4. Save session
+        // 4. Persist login session
+        log.info("[LOGIN] Step 4/5 — saving login session | ip={}", request.getClientIp());
         LoginSession session = LoginSession.builder()
                 .user(user)
                 .refreshTokenHash(hashToken(refreshToken))
@@ -86,10 +90,10 @@ public class AuthService {
                 .build();
         sessionRepository.save(session);
 
-        // 5. Update last login time
+        // 5. Update last login timestamp
         userRepository.updateLastLoginAt(user.getUserId(), Instant.now());
 
-        log.info("Login successful for user: {} | roles: {}", user.getUsername(), roles);
+        log.info("[LOGIN] Step 5/5 — SUCCESS for '{}' | roles={}", username, roles);
 
         return LoginResponse.builder()
                 .accessToken(accessToken)
@@ -97,7 +101,7 @@ public class AuthService {
                 .tokenType("Bearer")
                 .expiresIn(jwtService.getAccessExpirationMs() / 1000)
                 .userId(userId)
-                .username(user.getUsername())
+                .username(username)
                 .cif(user.getCif())
                 .roles(roles)
                 .build();
@@ -107,30 +111,37 @@ public class AuthService {
 
     @Transactional
     public LoginResponse refreshToken(RefreshTokenRequest request) {
-        String refreshToken = request.getRefreshToken();
-        log.debug("Refresh token request");
+        log.info("[REFRESH] Step 1/4 — validating refresh token signature");
 
-        // 1. Validate token signature and expiry
-        if (!jwtService.isTokenValid(refreshToken) || !jwtService.isRefreshToken(refreshToken)) {
+        // 1. Validate token signature and type
+        if (!jwtService.isTokenValid(request.getRefreshToken())
+                || !jwtService.isRefreshToken(request.getRefreshToken())) {
+            log.warn("[REFRESH] FAILED — invalid or expired refresh token");
             throw new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID);
         }
 
-        // 2. Check session
-        String tokenHash = hashToken(refreshToken);
+        // 2. Verify session is active in DB
+        log.info("[REFRESH] Step 2/4 — looking up session in database");
+        String tokenHash = hashToken(request.getRefreshToken());
         LoginSession session = sessionRepository.findByRefreshTokenHash(tokenHash)
-                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID,
-                        "Session not found for refresh token"));
+                .orElseThrow(() -> {
+                    log.warn("[REFRESH] FAILED — no session found for token hash");
+                    return new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID, "Session not found");
+                });
 
         if (!session.isValid()) {
+            log.warn("[REFRESH] FAILED — session {} is revoked or expired", session.getSessionId());
             throw new BusinessException(ErrorCode.SESSION_REVOKED, "Session is revoked or expired");
         }
 
         // 3. Load user
-        User user = userRepository.findByUsernameWithRoles(
-                jwtService.extractUsername(refreshToken))
+        String username = jwtService.extractUsername(request.getRefreshToken());
+        log.info("[REFRESH] Step 3/4 — loading user '{}'", username);
+        User user = userRepository.findByUsernameWithRoles(username)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         if (!user.isActive()) {
+            log.warn("[REFRESH] FAILED — account '{}' is not active (status={})", username, user.getStatus());
             throw new BusinessException(ErrorCode.ACCOUNT_INACTIVE);
         }
 
@@ -138,12 +149,12 @@ public class AuthService {
                 .map(ur -> ur.getRole().getRoleCode())
                 .collect(Collectors.toList());
 
-        // 4. Issue new tokens (token rotation)
+        // 4. Rotate tokens: revoke old session, issue new tokens, save new session
+        log.info("[REFRESH] Step 4/4 — rotating tokens (revoking session {})", session.getSessionId());
         String userId = user.getUserId().toString();
-        String newAccessToken  = jwtService.generateAccessToken(userId, user.getUsername(), user.getCif(), roles);
-        String newRefreshToken = jwtService.generateRefreshToken(userId, user.getUsername());
+        String newAccessToken  = jwtService.generateAccessToken(userId, username, user.getCif(), roles);
+        String newRefreshToken = jwtService.generateRefreshToken(userId, username);
 
-        // 5. Revoke old session, create new one
         sessionRepository.revokeById(session.getSessionId(), Instant.now());
 
         LoginSession newSession = LoginSession.builder()
@@ -156,7 +167,7 @@ public class AuthService {
                 .build();
         sessionRepository.save(newSession);
 
-        log.info("Token refreshed for user: {}", user.getUsername());
+        log.info("[REFRESH] SUCCESS for '{}' | roles={}", username, roles);
 
         return LoginResponse.builder()
                 .accessToken(newAccessToken)
@@ -164,7 +175,7 @@ public class AuthService {
                 .tokenType("Bearer")
                 .expiresIn(jwtService.getAccessExpirationMs() / 1000)
                 .userId(userId)
-                .username(user.getUsername())
+                .username(username)
                 .cif(user.getCif())
                 .roles(roles)
                 .build();
@@ -174,22 +185,28 @@ public class AuthService {
 
     public TokenValidationResponse validateToken(String token) {
         if (token == null || token.isBlank()) {
+            log.warn("[VALIDATE] Rejected — token is missing");
             return TokenValidationResponse.invalid("TOKEN_MISSING");
         }
 
         Map<String, Object> result = jwtService.validateAndExtract(token);
 
         if (!Boolean.TRUE.equals(result.get("valid"))) {
-            return TokenValidationResponse.invalid((String) result.get("reason"));
+            String reason = (String) result.get("reason");
+            log.warn("[VALIDATE] Rejected — reason: {}", reason);
+            return TokenValidationResponse.invalid(reason);
         }
 
         @SuppressWarnings("unchecked")
         List<String> roles = (List<String>) result.getOrDefault("roles", List.of());
+        String username = (String) result.get("username");
+
+        log.debug("[VALIDATE] OK — user='{}' roles={}", username, roles);
 
         return TokenValidationResponse.builder()
                 .valid(true)
                 .userId((String) result.get("userId"))
-                .username((String) result.get("username"))
+                .username(username)
                 .cif((String) result.get("cif"))
                 .roles(roles)
                 .expiresAt((Long) result.get("expiresAt"))
@@ -200,23 +217,26 @@ public class AuthService {
 
     @Transactional
     public boolean verifyOtp(VerifyOtpRequest request) {
+        log.info("[OTP] Verify request — userId={} purpose={}", request.getUserId(), request.getPurpose());
+
         User user = userRepository.findById(UUID.fromString(request.getUserId()))
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         OtpRequest otp = otpRepository.findLatestValidOtp(
                 user.getUserId(), request.getPurpose(), Instant.now())
-                .orElseThrow(() -> new BusinessException(ErrorCode.OTP_INVALID,
-                        "No valid OTP found for user and purpose"));
+                .orElseThrow(() -> {
+                    log.warn("[OTP] FAILED — no valid OTP found for userId={} purpose={}", request.getUserId(), request.getPurpose());
+                    return new BusinessException(ErrorCode.OTP_INVALID, "No valid OTP found for user and purpose");
+                });
 
-        // Verify OTP code hash
         boolean valid = passwordEncoder.matches(request.getOtpCode(), otp.getOtpCodeHash());
         if (!valid) {
+            log.warn("[OTP] FAILED — code mismatch for userId={}", request.getUserId());
             throw new BusinessException(ErrorCode.OTP_INVALID, "OTP code does not match");
         }
 
-        // Mark as used
         otpRepository.markAsUsed(otp.getOtpId());
-        log.info("OTP verified for user: {} purpose: {}", request.getUserId(), request.getPurpose());
+        log.info("[OTP] SUCCESS — userId={} purpose={}", request.getUserId(), request.getPurpose());
         return true;
     }
 
@@ -224,9 +244,10 @@ public class AuthService {
 
     @Transactional
     public void logout(String username) {
+        log.info("[LOGOUT] Request for '{}'", username);
         userRepository.findByUsername(username).ifPresent(user -> {
             int revoked = sessionRepository.revokeAllByUserId(user.getUserId(), Instant.now());
-            log.info("Logged out user: {} | sessions revoked: {}", username, revoked);
+            log.info("[LOGOUT] SUCCESS — '{}' | sessions revoked: {}", username, revoked);
         });
     }
 
@@ -259,25 +280,31 @@ public class AuthService {
      */
     @Transactional
     public CreateUserResponse createUser(CreateUserRequest request) {
+        log.info("[CREATE_USER] Step 1/4 — checking uniqueness: username='{}' cif='{}'",
+                request.getUsername(), request.getCif());
 
         // 1. Username uniqueness
         if (userRepository.existsByUsername(request.getUsername())) {
+            log.warn("[CREATE_USER] FAILED — username '{}' is already taken", request.getUsername());
             throw new BusinessException(ErrorCode.USERNAME_TAKEN,
                     "Username '" + request.getUsername() + "' is already in use");
         }
 
         // 2. One login account per CIF
         if (userRepository.findByCif(request.getCif()).isPresent()) {
+            log.warn("[CREATE_USER] FAILED — CIF '{}' already has a login account", request.getCif());
             throw new BusinessException(ErrorCode.CIF_ALREADY_HAS_USER,
                     "CIF " + request.getCif() + " already has a login account");
         }
 
         // 3. Resolve CUSTOMER role
+        log.info("[CREATE_USER] Step 2/4 — resolving CUSTOMER role");
         Role customerRole = roleRepository.findByRoleCode("CUSTOMER")
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROLE_NOT_FOUND,
                         "Role CUSTOMER not found in database"));
 
         // 4. Build and persist User
+        log.info("[CREATE_USER] Step 3/4 — persisting user and assigning role");
         User user = User.builder()
                 .username(request.getUsername())
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
@@ -286,7 +313,6 @@ public class AuthService {
                 .build();
         user = userRepository.save(user);
 
-        // 5. Assign CUSTOMER role
         UserRole userRole = UserRole.builder()
                 .user(user)
                 .role(customerRole)
@@ -294,7 +320,8 @@ public class AuthService {
         user.getUserRoles().add(userRole);
         userRepository.save(user);
 
-        log.info("User account created: username={}, cif={}", user.getUsername(), user.getCif());
+        log.info("[CREATE_USER] Step 4/4 — SUCCESS: userId={} username='{}' cif='{}'",
+                user.getUserId(), user.getUsername(), user.getCif());
 
         return CreateUserResponse.builder()
                 .userId(user.getUserId().toString())

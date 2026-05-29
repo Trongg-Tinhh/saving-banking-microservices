@@ -36,6 +36,7 @@ export class JwtAuthGuard implements CanActivate {
       path === '/health' ||
       path.startsWith('/swagger-ui') ||
       path.startsWith('/v3/api-docs') ||
+      path.startsWith('/api-docs') ||          // aggregated Swagger UI + spec proxies
       path.startsWith('/api/v1/auth/login') ||
       path.startsWith('/api/v1/auth/refresh-token') ||
       path.startsWith('/api/v1/auth/validate') ||

@@ -29,6 +29,8 @@ public class SecurityConfig {
             "/api/v1/contracts/health",
             "/swagger-ui/**",
             "/swagger-ui.html",
+            "/api-docs/**",        // springdoc.api-docs.path = /api-docs
+            "/api-docs",
             "/v3/api-docs/**",
             "/actuator/**"
     };

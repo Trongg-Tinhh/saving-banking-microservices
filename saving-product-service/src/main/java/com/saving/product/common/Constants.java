@@ -8,6 +8,7 @@ public final class Constants {
     public static final String AUTHORIZATION_HEADER   = "Authorization";
     public static final String BEARER_PREFIX          = "Bearer ";
     public static final String CORRELATION_ID_MDC_KEY = "correlationId";
+    public static final String MDC_USERNAME_KEY        = "username";
 
     public static final String CLAIM_USER_ID = "userId";
     public static final String CLAIM_CIF     = "cif";

@@ -69,8 +69,12 @@ management:
       show-details: always
 
 logging:
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%X{correlationId}] %-5level %logger{36} - %msg%n"
   level:
     com.saving.transaction: INFO
+    com.saving.transaction.service: INFO
+    com.saving.transaction.filter: INFO
+    com.saving.transaction.listener: INFO
     org.springframework.amqp: WARN
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId:-NO_CORR}] [%X{username:--}] %-5level %logger{36} - %msg%n"

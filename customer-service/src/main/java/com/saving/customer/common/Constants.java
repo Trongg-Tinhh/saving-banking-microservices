@@ -39,4 +39,7 @@ public final class Constants {
     public static final String KYC_PENDING      = "PENDING";
     public static final String KYC_VERIFIED     = "VERIFIED";
     public static final String KYC_REJECTED     = "REJECTED";
+
+    // ── MDC keys ───────────────────────────────────────────────────
+    public static final String MDC_USERNAME_KEY = "username";
 }

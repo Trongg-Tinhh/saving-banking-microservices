@@ -11,6 +11,7 @@ public final class Constants {
 
     // ── MDC Keys ──────────────────────────────────────────────────
     public static final String CORRELATION_ID_KEY = "correlationId";
+    public static final String MDC_USERNAME_KEY   = "username";
 
     // ── RabbitMQ ──────────────────────────────────────────────────
     public static final String AUTH_EXCHANGE       = "auth.events";

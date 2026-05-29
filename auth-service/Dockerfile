@@ -1,15 +1,16 @@
+# syntax=docker/dockerfile:1
 # ── Stage 1: Build ───────────────────────────────────────────────
 FROM maven:3.9-eclipse-temurin-17-alpine AS builder
 
 WORKDIR /app
 
-# Cache dependencies layer (faster rebuild)
+# Cache dependencies layer — reuse host ~/.m2 between builds (no re-download)
 COPY pom.xml .
-RUN mvn dependency:go-offline -B -q
+RUN --mount=type=cache,target=/root/.m2 mvn dependency:go-offline -B -q
 
 # Build
 COPY src ./src
-RUN mvn package -DskipTests -B -q
+RUN --mount=type=cache,target=/root/.m2 mvn package -DskipTests -B -q
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────
 FROM eclipse-temurin:17-jre-alpine

@@ -24,8 +24,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(
             BusinessException ex, WebRequest request) {
-        log.warn("Business exception: [{}] {} | details: {}",
-                ex.getErrorCode().getCode(), ex.getMessage(), ex.getDetails());
+        int httpStatus = ex.getErrorCode().getHttpStatus().value();
+        String path    = request.getDescription(false);
+        // 4xx → WARN, 5xx → ERROR
+        if (httpStatus >= 500) {
+            log.error("[EXCEPTION] {} {} — [{}] {} | path: {}",
+                    httpStatus, ex.getErrorCode().getHttpStatus().getReasonPhrase(),
+                    ex.getErrorCode().getCode(), ex.getMessage(), path);
+        } else {
+            log.warn("[EXCEPTION] {} {} — [{}] {} | details: {} | path: {}",
+                    httpStatus, ex.getErrorCode().getHttpStatus().getReasonPhrase(),
+                    ex.getErrorCode().getCode(), ex.getMessage(), ex.getDetails(), path);
+        }
         return ResponseEntity
                 .status(ex.getErrorCode().getHttpStatus())
                 .body(ApiResponse.error(
@@ -37,11 +47,12 @@ public class GlobalExceptionHandler {
     // ── Validation Exception ──────────────────────────────────────
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidationException(
-            MethodArgumentNotValidException ex) {
+            MethodArgumentNotValidException ex, WebRequest request) {
         String details = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
-        log.warn("Validation failed: {}", details);
+        log.warn("[EXCEPTION] 400 Bad Request — validation failed: {} | path: {}",
+                details, request.getDescription(false));
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(
@@ -52,8 +63,10 @@ public class GlobalExceptionHandler {
 
     // ── Spring Security Exceptions ────────────────────────────────
     @ExceptionHandler(BadCredentialsException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBadCredentials(BadCredentialsException ex) {
-        log.warn("Bad credentials attempt: {}", ex.getMessage());
+    public ResponseEntity<ApiResponse<Void>> handleBadCredentials(
+            BadCredentialsException ex, WebRequest request) {
+        log.warn("[EXCEPTION] 401 Unauthorized — bad credentials | path: {}",
+                request.getDescription(false));
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.error(
@@ -62,21 +75,27 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(LockedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleLockedException(LockedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleLockedException(
+            LockedException ex, WebRequest request) {
+        log.warn("[EXCEPTION] 403 Locked — account locked | path: {}", request.getDescription(false));
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("Account is locked", ErrorCode.ACCOUNT_LOCKED.getCode()));
     }
 
     @ExceptionHandler(DisabledException.class)
-    public ResponseEntity<ApiResponse<Void>> handleDisabledException(DisabledException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleDisabledException(
+            DisabledException ex, WebRequest request) {
+        log.warn("[EXCEPTION] 403 Disabled — account disabled | path: {}", request.getDescription(false));
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("Account is disabled", ErrorCode.ACCOUNT_INACTIVE.getCode()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            AccessDeniedException ex, WebRequest request) {
+        log.warn("[EXCEPTION] 403 Forbidden — access denied | path: {}", request.getDescription(false));
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("Access denied", ErrorCode.ACCESS_DENIED.getCode()));
@@ -86,8 +105,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(
             Exception ex, WebRequest request) {
-        log.error("Unhandled exception at [{}]: {}",
-                request.getDescription(false), ex.getMessage(), ex);
+        log.error("[EXCEPTION] 500 Internal Server Error — {} | path: {}",
+                ex.getMessage(), request.getDescription(false), ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error(

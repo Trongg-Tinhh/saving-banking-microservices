@@ -96,9 +96,12 @@ springdoc:
 # ── Logging ───────────────────────────────────────────────────────
 logging:
   level:
-    com.saving.auth: DEBUG
-    org.springframework.security: INFO
-    org.springframework.web: INFO
+    com.saving.auth: INFO               # step-by-step logs at INFO
+    com.saving.auth.service: INFO       # service-level steps
+    com.saving.auth.filter: INFO        # request entry/exit
+    org.springframework.security: WARN  # suppress security internals
+    org.springframework.web: WARN
     org.hibernate.SQL: WARN
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId:-NO_CORR}] %-5level %logger{40} - %msg%n"
+    # Format: timestamp [thread] [correlationId] [user] LEVEL logger - message
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId:-NO_CORR}] [%X{username:--}] %-5level %logger{36} - %msg%n"

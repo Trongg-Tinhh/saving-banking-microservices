@@ -41,9 +41,9 @@ import java.time.temporal.ChronoUnit;
 @RequiredArgsConstructor
 public class SavingContractService {
 
-    private final SavingContractRepository      contractRepository;
+    private final SavingContractRepository        contractRepository;
     private final ContractStatusHistoryRepository historyRepository;
-    private final MaturityInstructionRepository  maturityInstructionRepository;
+    private final MaturityInstructionRepository   maturityInstructionRepository;
 
     private final CustomerServiceClient customerClient;
     private final AccountServiceClient  accountClient;
@@ -57,43 +57,32 @@ public class SavingContractService {
     // Open Contract
     // ────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Full contract opening flow:
-     * 1. Validate customer (KYC VERIFIED + ACTIVE)
-     * 2. Validate source account (ACTIVE + sufficient balance)
-     * 3. Query & lock in interest rate from product service
-     * 4. Validate amount against product min/max
-     * 5. Persist contract (PENDING) + history + maturity instruction
-     * 6. Debit source account via account service
-     * 7. Update contract → ACTIVE
-     * 8. Publish CONTRACT_OPENED event
-     *
-     * @param request     the open-contract request body
-     * @param bearerToken the caller's JWT (forwarded to account-service for debit)
-     * @param openedBy    username extracted from JWT claims
-     */
     @Transactional
     public ContractResponse openContract(OpenContractRequest request,
                                          String bearerToken,
                                          String openedBy) {
 
         String correlationId = MDC.get("correlationId");
-        log.info("[{}] Opening contract for CIF={} product={} term={}",
-                correlationId, request.getCif(), request.getProductCode(), request.getTermId());
+        log.info("[OPEN_CONTRACT] Step 1/9 — validate customer: cif={} product={} term={} amount={} by={}",
+                request.getCif(), request.getProductCode(), request.getTermId(),
+                request.getPrincipalAmount(), openedBy);
 
         // ── 1. Validate customer ─────────────────────────────────────────────
-        CustomerValidationResult customer =
-                customerClient.validateCustomer(request.getCif());
+        CustomerValidationResult customer = customerClient.validateCustomer(request.getCif());
         if (!customer.isValid()) {
-            log.warn("[{}] Customer validation failed: {}", correlationId, customer.getInvalidReason());
+            log.warn("[OPEN_CONTRACT] FAILED — customer validation: cif={}, reason={}",
+                    request.getCif(), customer.getInvalidReason());
             throw new BusinessException(ErrorCode.CUSTOMER_NOT_VALID, customer.getInvalidReason());
         }
+        log.info("[OPEN_CONTRACT] Step 2/9 — validate source account: accountNo={} amount={}",
+                request.getSourceAccountNo(), request.getPrincipalAmount());
 
         // ── 2. Validate source account (sufficient funds) ────────────────────
         AccountValidationResult account =
                 accountClient.validateAccount(request.getSourceAccountNo(), request.getPrincipalAmount());
         if (!account.isValid()) {
-            log.warn("[{}] Account validation failed: {}", correlationId, account.getInvalidReason());
+            log.warn("[OPEN_CONTRACT] FAILED — account validation: accountNo={}, reason={}",
+                    request.getSourceAccountNo(), account.getInvalidReason());
             String reason = account.getInvalidReason();
             if (reason != null && reason.toLowerCase().contains("insufficient")) {
                 throw new BusinessException(ErrorCode.INSUFFICIENT_FUNDS, reason);
@@ -103,17 +92,27 @@ public class SavingContractService {
 
         // ── 3. Lock in interest rate ─────────────────────────────────────────
         LocalDate openDate = request.getOpenDate() != null ? request.getOpenDate() : LocalDate.now();
+        log.info("[OPEN_CONTRACT] Step 3/9 — query interest rate: product={} term={} date={}",
+                request.getProductCode(), request.getTermId(), openDate);
         ProductRateResult rate =
                 productClient.queryRate(request.getProductCode(), request.getTermId(), openDate);
+        log.info("[OPEN_CONTRACT]   rate={}% currency={} interestMethod={}",
+                rate.getAnnualRate(), rate.getCurrency(), rate.getInterestPaymentMethod());
 
         // ── 4. Validate amount against product limits ────────────────────────
+        log.info("[OPEN_CONTRACT] Step 4/9 — validate principal: amount={} min={} max={}",
+                request.getPrincipalAmount(), rate.getMinAmount(), rate.getMaxAmount());
         if (rate.getMinAmount() != null
                 && request.getPrincipalAmount().compareTo(rate.getMinAmount()) < 0) {
+            log.warn("[OPEN_CONTRACT] FAILED — amount below minimum: amount={} min={}",
+                    request.getPrincipalAmount(), rate.getMinAmount());
             throw new BusinessException(ErrorCode.AMOUNT_BELOW_MINIMUM,
                     "Minimum amount is " + rate.getMinAmount() + " " + rate.getCurrency());
         }
         if (rate.getMaxAmount() != null
                 && request.getPrincipalAmount().compareTo(rate.getMaxAmount()) > 0) {
+            log.warn("[OPEN_CONTRACT] FAILED — amount above maximum: amount={} max={}",
+                    request.getPrincipalAmount(), rate.getMaxAmount());
             throw new BusinessException(ErrorCode.AMOUNT_ABOVE_MAXIMUM,
                     "Maximum amount is " + rate.getMaxAmount() + " " + rate.getCurrency());
         }
@@ -126,9 +125,13 @@ public class SavingContractService {
                     "Term has no valid duration configured");
         }
         LocalDate maturityDate = openDate.plusDays(termDays);
+        log.info("[OPEN_CONTRACT] Step 5/9 — maturity date: openDate={} termDays={} maturity={}",
+                openDate, termDays, maturityDate);
 
         // ── 6. Persist contract in PENDING state ─────────────────────────────
         String contractNo = contractNumberGenerator.generate();
+        log.info("[OPEN_CONTRACT] Step 6/9 — persist PENDING contract: contractNo={} cif={} maturity={}",
+                contractNo, request.getCif(), maturityDate);
 
         SavingContract contract = SavingContract.builder()
                 .contractNo(contractNo)
@@ -147,13 +150,11 @@ public class SavingContractService {
                 .openedBy(openedBy)
                 .build();
 
-        contract = contractRepository.save(contract);   // capture managed instance (merge path)
+        contract = contractRepository.save(contract);
 
-        // Status history: PENDING entry
         saveHistory(contract, null, Constants.ContractStatus.PENDING, openedBy,
                 "Contract created", correlationId);
 
-        // Maturity instruction (optional)
         if (request.getMaturityInstruction() != null) {
             OpenContractRequest.MaturityInstructionDto mid = request.getMaturityInstruction();
             MaturityInstruction instruction = MaturityInstruction.builder()
@@ -164,10 +165,13 @@ public class SavingContractService {
                     .build();
             maturityInstructionRepository.save(instruction);
             contract.setMaturityInstruction(instruction);
+            log.info("[OPEN_CONTRACT]   maturity instruction saved: type={}", mid.getInstructionType());
         }
 
         // ── 7. Debit source account ──────────────────────────────────────────
         String debitRef = "CONTRACT-OPEN-" + contractNo;
+        log.info("[OPEN_CONTRACT] Step 7/9 — debit source account: accountNo={} amount={} ref={}",
+                request.getSourceAccountNo(), request.getPrincipalAmount(), debitRef);
         try {
             accountClient.debitAccount(
                     request.getSourceAccountNo(),
@@ -176,8 +180,7 @@ public class SavingContractService {
                     "Contract opening deposit for " + contractNo,
                     bearerToken);
         } catch (BusinessException ex) {
-            log.error("[{}] Debit failed for contract {}; marking FAILED. reason={}",
-                    correlationId, contractNo, ex.getMessage());
+            log.error("[OPEN_CONTRACT] FAILED — debit failed: contractNo={} reason={}", contractNo, ex.getMessage());
             contract.setStatus(Constants.ContractStatus.FAILED);
             saveHistory(contract, Constants.ContractStatus.PENDING,
                     Constants.ContractStatus.FAILED, openedBy,
@@ -187,6 +190,7 @@ public class SavingContractService {
         }
 
         // ── 8. Activate contract ─────────────────────────────────────────────
+        log.info("[OPEN_CONTRACT] Step 8/9 — activate contract PENDING→ACTIVE: contractNo={}", contractNo);
         contract.setStatus(Constants.ContractStatus.ACTIVE);
         saveHistory(contract, Constants.ContractStatus.PENDING,
                 Constants.ContractStatus.ACTIVE, openedBy,
@@ -194,10 +198,12 @@ public class SavingContractService {
         contractRepository.save(contract);
 
         // ── 9. Publish event ─────────────────────────────────────────────────
+        log.info("[OPEN_CONTRACT] Step 9/9 — publish CONTRACT_OPENED event: contractNo={}", contractNo);
         eventPublisher.publishContractOpened(contract);
 
-        log.info("[{}] Contract {} opened successfully (maturity={})",
-                correlationId, contractNo, maturityDate);
+        log.info("[OPEN_CONTRACT] SUCCESS — contractNo={} cif={} principal={} {} rate={}% maturity={}",
+                contractNo, request.getCif(), request.getPrincipalAmount(),
+                rate.getCurrency(), rate.getAnnualRate(), maturityDate);
 
         return ContractResponse.from(contract);
     }
@@ -206,17 +212,6 @@ public class SavingContractService {
     // Close Contract
     // ────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Close a contract — either at maturity or early withdrawal.
-     *
-     * Flow:
-     * 1. Load contract (must be ACTIVE or MATURED)
-     * 2. Determine close type (MATURITY vs EARLY_WITHDRAWAL)
-     * 3. Calculate interest based on close type
-     * 4. Credit total payout (principal + interest) back to source account
-     * 5. Update contract status (CLOSED or EARLY_CLOSED)
-     * 6. Publish event
-     */
     @Transactional
     public CloseContractResponse closeContract(String contractNo,
                                                CloseContractRequest request,
@@ -224,48 +219,57 @@ public class SavingContractService {
                                                String closedBy) {
 
         String correlationId = MDC.get("correlationId");
-        log.info("[{}] Closing contract {} by {}", correlationId, contractNo, closedBy);
+        log.info("[CLOSE_CONTRACT] Step 1/6 — load & validate contract state: contractNo={} by={}",
+                contractNo, closedBy);
 
         // ── 1. Load contract ──────────────────────────────────────────────────
         SavingContract contract = contractRepository.findByContractNoWithInstruction(contractNo)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo));
+                .orElseThrow(() -> {
+                    log.warn("[CLOSE_CONTRACT] NOT FOUND: contractNo={}", contractNo);
+                    return new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo);
+                });
 
         String currentStatus = contract.getStatus();
 
-        // Terminal states — cannot close again
         if (Constants.ContractStatus.CLOSED.equals(currentStatus)
                 || Constants.ContractStatus.EARLY_CLOSED.equals(currentStatus)
                 || Constants.ContractStatus.CANCELLED.equals(currentStatus)
                 || Constants.ContractStatus.FAILED.equals(currentStatus)) {
+            log.warn("[CLOSE_CONTRACT] FAILED — already terminal: contractNo={} status={}",
+                    contractNo, currentStatus);
             throw new BusinessException(ErrorCode.CONTRACT_ALREADY_CLOSED,
                     "Contract " + contractNo + " is already in terminal state: " + currentStatus);
         }
 
-        // Must be ACTIVE or MATURED to close
         if (!Constants.ContractStatus.ACTIVE.equals(currentStatus)
                 && !Constants.ContractStatus.MATURED.equals(currentStatus)) {
+            log.warn("[CLOSE_CONTRACT] FAILED — not closeable: contractNo={} status={}",
+                    contractNo, currentStatus);
             throw new BusinessException(ErrorCode.CONTRACT_NOT_ACTIVE,
                     "Contract " + contractNo + " has status: " + currentStatus);
         }
 
         // ── 2. Determine close type ───────────────────────────────────────────
         boolean earlyWithdrawal = contract.isEarlyWithdrawal();
-        String  newStatus   = earlyWithdrawal
+        String  newStatus       = earlyWithdrawal
                 ? Constants.ContractStatus.EARLY_CLOSED
                 : Constants.ContractStatus.CLOSED;
-        String  closeType   = earlyWithdrawal
+        String  closeType       = earlyWithdrawal
                 ? Constants.CloseType.EARLY_WITHDRAWAL
                 : Constants.CloseType.MATURITY;
+        long    daysHeld        = contract.getDaysHeld();
+
+        log.info("[CLOSE_CONTRACT] Step 2/6 — determine close type: contractNo={} earlyWithdrawal={} daysHeld={} {}→{}",
+                contractNo, earlyWithdrawal, daysHeld, currentStatus, newStatus);
 
         // ── 3. Calculate interest ─────────────────────────────────────────────
         BigDecimal principal = contract.getPrincipalAmount();
         BigDecimal interest;
-        long daysHeld = contract.getDaysHeld();
+
+        log.info("[CLOSE_CONTRACT] Step 3/6 — calculate interest: contractNo={} principal={} rate={}% closeType={}",
+                contractNo, principal, contract.getInterestRate(), closeType);
 
         if (earlyWithdrawal) {
-            // Determine early-withdrawal demand rate from product service
-            // (already stored in earlyWithdrawalDemandRate if we had it; use a re-query)
-            // For simplicity: we re-query the product service to get the demand rate
             ProductRateResult rateInfo = productClient.queryRate(
                     contract.getProductCode(),
                     contract.getTermId(),
@@ -277,22 +281,27 @@ public class SavingContractService {
                     ? rateInfo.getEarlyWithdrawalDemandRate()
                     : BigDecimal.ZERO;
 
+            log.info("[CLOSE_CONTRACT]   early withdrawal demand rate={}%", demandRate);
             interest = interestCalculator.calculateEarlyWithdrawalInterest(
                     principal, demandRate, daysHeld);
         } else {
-            // Full-term interest using locked-in rate and contracted term days
             long termDays = contract.getOpenDate().until(contract.getMaturityDate(), ChronoUnit.DAYS);
             interest = interestCalculator.calculateFullTermInterest(
                     principal, contract.getInterestRate(), (int) termDays);
         }
 
-        BigDecimal totalPayout = interestCalculator.totalPayout(principal, interest);
-        String creditAccountNo = request.getReceivingAccountNo() != null
+        BigDecimal totalPayout    = interestCalculator.totalPayout(principal, interest);
+        String     creditAccountNo = request.getReceivingAccountNo() != null
                 ? request.getReceivingAccountNo()
                 : contract.getSourceAccountNo();
 
+        log.info("[CLOSE_CONTRACT]   interest={} totalPayout={} creditTo={}",
+                interest, totalPayout, creditAccountNo);
+
         // ── 4. Credit payout ──────────────────────────────────────────────────
         String creditRef = "CONTRACT-CLOSE-" + contractNo;
+        log.info("[CLOSE_CONTRACT] Step 4/6 — credit payout: accountNo={} amount={} ref={}",
+                creditAccountNo, totalPayout, creditRef);
         accountClient.creditAccount(
                 creditAccountNo,
                 totalPayout,
@@ -301,6 +310,8 @@ public class SavingContractService {
                 bearerToken);
 
         // ── 5. Update contract ────────────────────────────────────────────────
+        log.info("[CLOSE_CONTRACT] Step 5/6 — update contract: contractNo={} {}→{}",
+                contractNo, currentStatus, newStatus);
         OffsetDateTime now = OffsetDateTime.now();
         contract.setStatus(newStatus);
         contract.setClosedAt(now);
@@ -310,10 +321,11 @@ public class SavingContractService {
         contractRepository.save(contract);
 
         // ── 6. Publish event ──────────────────────────────────────────────────
+        log.info("[CLOSE_CONTRACT] Step 6/6 — publish CONTRACT_CLOSED event: contractNo={}", contractNo);
         eventPublisher.publishContractClosed(contract, interest, totalPayout);
 
-        log.info("[{}] Contract {} closed. type={} payout={} {}",
-                correlationId, contractNo, closeType, totalPayout, contract.getCurrency());
+        log.info("[CLOSE_CONTRACT] SUCCESS — contractNo={} closeType={} principal={} interest={} payout={} {}",
+                contractNo, closeType, principal, interest, totalPayout, contract.getCurrency());
 
         return CloseContractResponse.builder()
                 .contractNo(contractNo)
@@ -337,35 +349,48 @@ public class SavingContractService {
 
     @Transactional(readOnly = true)
     public ContractResponse getContract(String contractNo) {
+        log.info("[GET_CONTRACT] lookup: contractNo={}", contractNo);
         SavingContract contract = contractRepository.findByContractNoWithInstruction(contractNo)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo));
+                .orElseThrow(() -> {
+                    log.warn("[GET_CONTRACT] NOT FOUND: contractNo={}", contractNo);
+                    return new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo);
+                });
+        log.info("[GET_CONTRACT] OK: contractNo={} cif={} status={} maturity={}",
+                contractNo, contract.getCif(), contract.getStatus(), contract.getMaturityDate());
         return ContractResponse.from(contract);
     }
 
-    /**
-     * Flexible list — both params are optional:
-     *   cif=null, status=null  → all contracts (staff view)
-     *   cif=X,    status=null  → all contracts for one customer
-     *   cif=null, status=X     → all contracts with that status
-     *   cif=X,    status=X     → filtered
-     * The repository JPQL already handles NULL via "IS NULL OR c.field = :param".
-     */
     @Transactional(readOnly = true)
     public Page<ContractSummaryResponse> listContracts(String cif, String status, Pageable pageable) {
-        return contractRepository.findByCifAndStatus(cif, status, pageable)
+        log.info("[LIST_CONTRACTS] query: cif={} status={} page={}/size={}",
+                cif, status, pageable.getPageNumber(), pageable.getPageSize());
+        Page<ContractSummaryResponse> result = contractRepository
+                .findByCifAndStatus(cif, status, pageable)
                 .map(ContractSummaryResponse::from);
+        log.info("[LIST_CONTRACTS] OK: total={}", result.getTotalElements());
+        return result;
     }
 
     @Transactional(readOnly = true)
     public Page<ContractSummaryResponse> getContractsByCif(String cif, Pageable pageable) {
-        return contractRepository.findByCif(cif, pageable)
+        log.info("[GET_CONTRACTS_BY_CIF] cif={} page={}/size={}",
+                cif, pageable.getPageNumber(), pageable.getPageSize());
+        Page<ContractSummaryResponse> result = contractRepository
+                .findByCif(cif, pageable)
                 .map(ContractSummaryResponse::from);
+        log.info("[GET_CONTRACTS_BY_CIF] OK: cif={} total={}", cif, result.getTotalElements());
+        return result;
     }
 
     @Transactional(readOnly = true)
     public Page<ContractSummaryResponse> getContractsByStatus(String status, Pageable pageable) {
-        return contractRepository.findByStatus(status, pageable)
+        log.info("[GET_CONTRACTS_BY_STATUS] status={} page={}/size={}",
+                status, pageable.getPageNumber(), pageable.getPageSize());
+        Page<ContractSummaryResponse> result = contractRepository
+                .findByStatus(status, pageable)
                 .map(ContractSummaryResponse::from);
+        log.info("[GET_CONTRACTS_BY_STATUS] OK: status={} total={}", status, result.getTotalElements());
+        return result;
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -377,13 +402,22 @@ public class SavingContractService {
                                                        UpdateMaturityInstructionRequest request,
                                                        String updatedBy) {
 
+        log.info("[UPDATE_MATURITY_INSTRUCTION] Step 1/2 — load & validate ACTIVE contract: contractNo={}",
+                contractNo);
         SavingContract contract = contractRepository.findByContractNoWithInstruction(contractNo)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo));
+                .orElseThrow(() -> {
+                    log.warn("[UPDATE_MATURITY_INSTRUCTION] NOT FOUND: contractNo={}", contractNo);
+                    return new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo);
+                });
 
         if (!Constants.ContractStatus.ACTIVE.equals(contract.getStatus())) {
+            log.warn("[UPDATE_MATURITY_INSTRUCTION] FAILED — not active: contractNo={} status={}",
+                    contractNo, contract.getStatus());
             throw new BusinessException(ErrorCode.CONTRACT_NOT_ACTIVE, contractNo);
         }
 
+        log.info("[UPDATE_MATURITY_INSTRUCTION] Step 2/2 — upsert instruction: contractNo={} type={} receivingAccount={}",
+                contractNo, request.getInstructionType(), request.getReceivingAccountNo());
         MaturityInstruction instruction = contract.getMaturityInstruction();
         if (instruction == null) {
             instruction = MaturityInstruction.builder()
@@ -397,9 +431,7 @@ public class SavingContractService {
         maturityInstructionRepository.save(instruction);
         contract.setMaturityInstruction(instruction);
 
-        log.info("[{}] Maturity instruction updated for contract {} by {}",
-                MDC.get("correlationId"), contractNo, updatedBy);
-
+        log.info("[UPDATE_MATURITY_INSTRUCTION] SUCCESS — contractNo={} by={}", contractNo, updatedBy);
         return ContractResponse.from(contract);
     }
 
@@ -407,33 +439,33 @@ public class SavingContractService {
     // Internal (called by Lifecycle Service)
     // ────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Mark a contract as MATURED (called by the Saving Lifecycle Service via internal API).
-     */
     @Transactional
     public ContractResponse markMatured(String contractNo) {
+        String correlationId = MDC.get("correlationId");
+        log.info("[MARK_MATURED] Step 1/2 — load & validate ACTIVE contract: contractNo={}", contractNo);
         SavingContract contract = contractRepository.findByContractNoWithInstruction(contractNo)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo));
+                .orElseThrow(() -> {
+                    log.warn("[MARK_MATURED] NOT FOUND: contractNo={}", contractNo);
+                    return new BusinessException(ErrorCode.CONTRACT_NOT_FOUND, contractNo);
+                });
 
         if (!Constants.ContractStatus.ACTIVE.equals(contract.getStatus())) {
+            log.warn("[MARK_MATURED] FAILED — not ACTIVE: contractNo={} status={}",
+                    contractNo, contract.getStatus());
             throw new BusinessException(ErrorCode.CONTRACT_NOT_ACTIVE,
                     "Contract " + contractNo + " is not ACTIVE, current status: " + contract.getStatus());
         }
 
+        log.info("[MARK_MATURED] Step 2/2 — persist MATURED + publish event: contractNo={}", contractNo);
         contract.setStatus(Constants.ContractStatus.MATURED);
         saveHistory(contract, Constants.ContractStatus.ACTIVE, Constants.ContractStatus.MATURED,
-                "SYSTEM", "Contract reached maturity date", MDC.get("correlationId"));
+                "SYSTEM", "Contract reached maturity date", correlationId);
         contractRepository.save(contract);
-
         eventPublisher.publishContractMatured(contract);
 
-        log.info("[{}] Contract {} marked as MATURED", MDC.get("correlationId"), contractNo);
+        log.info("[MARK_MATURED] SUCCESS — contractNo={} maturityDate={}", contractNo, contract.getMaturityDate());
         return ContractResponse.from(contract);
     }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ────────────────────────────────────────────────────────────────────────
 
     // ────────────────────────────────────────────────────────────────────────
     // Periodic interest (MONTHLY / QUARTERLY) — called by Lifecycle Service
@@ -441,9 +473,13 @@ public class SavingContractService {
 
     @Transactional(readOnly = true)
     public Page<ContractSummaryResponse> getPeriodicInterestContracts(Pageable pageable) {
-        return contractRepository
+        log.info("[GET_PERIODIC_INTEREST] query: page={}/size={}",
+                pageable.getPageNumber(), pageable.getPageSize());
+        Page<ContractSummaryResponse> result = contractRepository
                 .findPeriodicInterestContracts(LocalDate.now(), pageable)
                 .map(ContractSummaryResponse::from);
+        log.info("[GET_PERIODIC_INTEREST] OK: total={}", result.getTotalElements());
+        return result;
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -463,10 +499,14 @@ public class SavingContractService {
 
     @Transactional(readOnly = true)
     public List<ContractStatusHistoryResponse> getStatusHistory(String contractNo) {
-        return historyRepository.findByContractNoOrderByChangedAtAsc(contractNo)
+        log.info("[GET_STATUS_HISTORY] contractNo={}", contractNo);
+        List<ContractStatusHistoryResponse> history = historyRepository
+                .findByContractNoOrderByChangedAtAsc(contractNo)
                 .stream()
                 .map(ContractStatusHistoryResponse::from)
                 .toList();
+        log.info("[GET_STATUS_HISTORY] OK: contractNo={} entries={}", contractNo, history.size());
+        return history;
     }
 
     // ────────────────────────────────────────────────────────────────────────

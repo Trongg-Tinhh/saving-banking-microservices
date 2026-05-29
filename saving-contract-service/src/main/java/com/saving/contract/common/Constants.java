@@ -76,4 +76,7 @@ public final class Constants {
 
     // ── Contract number ───────────────────────────────────────────────────
     public static final String CONTRACT_PREFIX = "SC";
+
+    // ── MDC keys ──────────────────────────────────────────────────────────
+    public static final String MDC_USERNAME_KEY = "username";
 }

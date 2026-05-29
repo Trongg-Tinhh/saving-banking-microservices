@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -50,10 +51,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     var authToken = new UsernamePasswordAuthenticationToken(username, null, authorities);
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
+
+                    // Enrich MDC so all subsequent log lines include the authenticated user
+                    MDC.put(Constants.MDC_USERNAME_KEY, username);
+                    log.info("JWT auth OK: user={} path={} roles={}", username, request.getRequestURI(), roles);
                 }
             }
         } catch (Exception ex) {
-            log.warn("JWT filter error for {}: {}", request.getRequestURI(), ex.getMessage());
+            log.warn("JWT auth error for {}: {}", request.getRequestURI(), ex.getMessage());
         }
         chain.doFilter(request, response);
     }

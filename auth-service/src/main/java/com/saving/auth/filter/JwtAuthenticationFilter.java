@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -61,8 +62,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
 
-                    log.debug("JWT authenticated: user={}, path={}",
-                            username, request.getRequestURI());
+                    // Enrich MDC so all subsequent log lines include the authenticated user
+                    MDC.put(Constants.MDC_USERNAME_KEY, username);
+                    log.info("JWT auth OK: user={} path={} roles={}",
+                            username, request.getRequestURI(),
+                            userDetails.getAuthorities());
                 }
             }
         } catch (Exception ex) {

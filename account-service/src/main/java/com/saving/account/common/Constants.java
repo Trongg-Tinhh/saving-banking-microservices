@@ -45,4 +45,7 @@ public final class Constants {
 
     // ── Account number prefix ──────────────────────────────────────
     public static final String ACCOUNT_PREFIX = "ACC";
+
+    // ── MDC keys ───────────────────────────────────────────────────
+    public static final String MDC_USERNAME_KEY = "username";
 }

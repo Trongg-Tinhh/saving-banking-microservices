@@ -823,6 +823,102 @@ Nếu bạn muốn extend hệ thống, implement theo thứ tự sau:
 
 ## 📝 Changelog
 
+### v1.2.0 — Structured Logging across all services
+
+#### ✨ Tính năng mới
+
+**Logging chuẩn hoá toàn hệ thống (7 services)**
+
+Áp dụng nhất quán pattern logging có cấu trúc cho tất cả Java Spring Boot services và API Gateway:
+
+| Service | Files thay đổi |
+|---|---|
+| `api-gateway` | `app.module.ts`, `jwt-auth.guard.ts`, `proxy.service.ts`, `main.ts` |
+| `auth-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `AuthService`, `GlobalExceptionHandler`, `application.yml` |
+| `saving-product-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `SavingProductService`, `GlobalExceptionHandler`, `application.yml` |
+| `account-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `AccountService`, `GlobalExceptionHandler`, `application.yml` |
+| `customer-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `CustomerService`, `GlobalExceptionHandler`, `application.yml` |
+| `saving-contract-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `SavingContractService`, `GlobalExceptionHandler`, `application.yml` |
+| `saving-transaction-service` | `Constants`, `JwtAuthFilter`, `RequestLoggingFilter` (mới), `TransactionService`, `ContractEventListener`, `GlobalExceptionHandler`, `application.yml` |
+
+**MDC (Mapped Diagnostic Context)**
+
+- Mỗi request gắn `correlationId` (UUID) từ `CorrelationIdFilter` — tuyên truyền sang toàn bộ log của request đó
+- `JwtAuthenticationFilter` sau khi xác thực xong ghi `username` vào MDC — hiển thị trong tất cả service-layer logs
+- `RequestLoggingFilter.finally` dọn dẹp MDC sau khi response hoàn thành
+
+**Log pattern mới** (tất cả Spring Boot services)
+
+```
+%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId:-NO_CORR}] [%X{username:--}] %-5level %logger{36} - %msg%n
+```
+
+Ví dụ output:
+```
+2025-05-29 10:23:45.123 [nio-8085-exec-3] [req-a1b2c3d4] [customer001] INFO  c.s.c.s.SavingContractService - [OPEN_CONTRACT] Step 1/9 — validate customer: cif=CIF0001
+2025-05-29 10:23:45.145 [nio-8085-exec-3] [req-a1b2c3d4] [customer001] INFO  c.s.c.s.SavingContractService - [OPEN_CONTRACT] Step 7/9 — debit source account: ref=CONTRACT-OPEN-SAV-001 amount=50000000 VND
+2025-05-29 10:23:45.201 [nio-8085-exec-3] [req-a1b2c3d4] [customer001] INFO  c.s.c.s.SavingContractService - [OPEN_CONTRACT] SUCCESS — contractNo=SAV-001 cif=CIF0001 principal=50000000 VND rate=5.5% maturity=2025-11-29
+```
+
+**`RequestLoggingFilter`** (mới — tất cả services)
+
+```
+► POST /api/v1/saving-contracts/open | ip: 10.244.0.5     ← request vào
+◄ 201 POST /api/v1/saving-contracts/open | 234ms          ← response ra (INFO/WARN/ERROR theo HTTP status)
+```
+
+- Skip paths: `/actuator/**`, `/api/v1/{resource}/health` (không log noise)
+- Response log level: `INFO` (2xx/3xx), `WARN` (4xx), `ERROR` (5xx)
+
+**Step-by-step service logs**
+
+Format chuẩn: `[OPERATION] Step N/M — mô tả: key=value`
+
+| Service | Số bước | Operation key |
+|---|---|---|
+| AuthService | login: 4, refresh: 3, logout: 2 | `[LOGIN]`, `[REFRESH_TOKEN]`, `[LOGOUT]` |
+| SavingProductService | create: 4, update: 3, addRate: 4 | `[CREATE_PRODUCT]`, `[ADD_RATE]` |
+| AccountService | create: 5, debit: 4, credit: 3, placeHold: 4, releaseHold: 4 | `[CREATE_ACCOUNT]`, `[DEBIT]`, `[CREDIT]`, `[PLACE_HOLD]` |
+| CustomerService | create: 5, update: 3, kyc: 3, addContact: 3 | `[CREATE_CUSTOMER]`, `[UPDATE_KYC]` |
+| SavingContractService | open: 9, close: 6, updateInstruction: 2 | `[OPEN_CONTRACT]`, `[CLOSE_CONTRACT]` |
+| TransactionService | record: 3, queries: 2 | `[RECORD_TX]`, `[LIST_TX]`, `[GET_TX]` |
+
+**`GlobalExceptionHandler`** chuẩn hoá
+
+```
+[EXCEPTION] 404 — [TRANSACTION_NOT_FOUND] Transaction not found | path: uri=/api/v1/transactions/uuid-xyz
+[EXCEPTION] 400 — validation failed: amount must be positive; currency must not be blank | path: uri=...
+[EXCEPTION] 403 Forbidden — access denied | path: uri=...
+[EXCEPTION] 500 Internal Server Error — ... | path: uri=...
+```
+
+**RabbitMQ Listener logs** (`saving-transaction-service`)
+
+```
+[CONTRACT_OPENED_EVENT] received: contractNo=SAV-001 cif=CIF0001 principal=50000000 ref=CONTRACT-OPEN-SAV-001
+[CONTRACT_OPENED_EVENT] SUCCESS: contractNo=SAV-001 DEBIT recorded
+[CONTRACT_CLOSED_EVENT] received: contractNo=SAV-001 payout=52750000 interest=2750000 type=NORMAL_CLOSED
+[CONTRACT_MATURED_EVENT] received: contractNo=SAV-001 — no monetary movement
+```
+
+#### 🔧 Cách đọc logs trên Kubernetes
+
+```powershell
+# Xem logs real-time với correlationId filter
+kubectl logs -n saving-banking deploy/saving-contract-service -f | Select-String "req-a1b2"
+
+# Xem tất cả bước của 1 request cụ thể
+kubectl logs -n saving-banking deploy/saving-contract-service --tail=500 | Select-String "req-a1b2c3d4"
+
+# Xem logs lỗi từ GlobalExceptionHandler
+kubectl logs -n saving-banking deploy/saving-transaction-service --tail=200 | Select-String "\[EXCEPTION\]"
+
+# Xem logs request/response (filter ► ◄)
+kubectl logs -n saving-banking deploy/account-service -f | Select-String "[►◄]"
+```
+
+---
+
 ### v1.1.0 — Web UI + K8s deployment + Product management
 
 #### ✨ Tính năng mới

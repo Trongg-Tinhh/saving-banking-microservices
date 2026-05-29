@@ -64,7 +64,9 @@ springdoc:
 logging:
   level:
     com.saving.account: INFO
-    org.hibernate.SQL: WARN
+    com.saving.account.service: INFO
+    com.saving.account.filter: INFO
     org.springframework.security: WARN
+    org.hibernate.SQL: WARN
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{correlationId:-NO_CORR}] %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId:-NO_CORR}] [%X{username:--}] %-5level %logger{36} - %msg%n"
