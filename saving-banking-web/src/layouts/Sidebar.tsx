@@ -13,6 +13,7 @@ import {
   WalletOutlined,
   TeamOutlined,
   IdcardOutlined,
+  UserAddOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ROUTES } from '@/constants/routes';
@@ -62,6 +63,12 @@ const ALL_MENU_ITEMS: MenuItem[] = [
     key:       ROUTES.CUSTOMERS,
     icon:      <TeamOutlined />,
     label:     'Tra cứu khách hàng',
+    staffOnly: true,
+  },
+  {
+    key:       ROUTES.CUSTOMER_CREATE,
+    icon:      <UserAddOutlined />,
+    label:     'Tạo khách hàng mới',
     staffOnly: true,
   },
   {

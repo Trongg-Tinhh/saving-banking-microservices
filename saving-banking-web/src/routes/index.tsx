@@ -24,6 +24,7 @@ const NotificationPage      = lazy(() => import('@/pages/notifications/Notificat
 const CreateAccountPage     = lazy(() => import('@/pages/accounts/CreateAccountPage'));
 const AccountDetailPage     = lazy(() => import('@/pages/accounts/AccountDetailPage'));
 const CustomerSearchPage    = lazy(() => import('@/pages/customers/CustomerSearchPage'));
+const CustomerCreatePage    = lazy(() => import('@/pages/customers/CustomerCreatePage'));
 const CustomerDetailPage    = lazy(() => import('@/pages/customers/CustomerDetailPage'));
 const NotFoundPage          = lazy(() => import('@/pages/errors/NotFoundPage'));
 const ForbiddenPage         = lazy(() => import('@/pages/errors/ForbiddenPage'));
@@ -120,7 +121,11 @@ export const router = createBrowserRouter([
         path: ROUTES.ACCOUNT_DETAIL,
         element: <Suspense fallback={<PageFallback />}><AccountDetailPage /></Suspense>,
       },
-      // Customers
+      // Customers — create must come BEFORE :cif to avoid route collision
+      {
+        path: ROUTES.CUSTOMER_CREATE,
+        element: <Suspense fallback={<PageFallback />}><CustomerCreatePage /></Suspense>,
+      },
       {
         path: ROUTES.CUSTOMERS,
         element: <Suspense fallback={<PageFallback />}><CustomerSearchPage /></Suspense>,

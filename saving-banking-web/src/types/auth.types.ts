@@ -31,3 +31,20 @@ export interface UserProfile {
   roles: UserRole[];
   lastLoginAt: string | null;
 }
+
+// ── Admin: create customer login account ──────────────────────────
+
+export interface CreateAuthUserRequest {
+  username: string;
+  password: string;
+  cif:      string;
+}
+
+export interface CreateAuthUserResponse {
+  userId:    string;
+  username:  string;
+  cif:       string;
+  role:      string;
+  status:    string;
+  createdAt: string;
+}

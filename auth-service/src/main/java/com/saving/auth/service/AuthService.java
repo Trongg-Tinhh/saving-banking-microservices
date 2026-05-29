@@ -1,8 +1,10 @@
 package com.saving.auth.service;
 
+import com.saving.auth.dto.request.CreateUserRequest;
 import com.saving.auth.dto.request.LoginRequest;
 import com.saving.auth.dto.request.RefreshTokenRequest;
 import com.saving.auth.dto.request.VerifyOtpRequest;
+import com.saving.auth.dto.response.CreateUserResponse;
 import com.saving.auth.dto.response.LoginResponse;
 import com.saving.auth.dto.response.TokenValidationResponse;
 import com.saving.auth.dto.response.UserInfoResponse;
@@ -11,6 +13,7 @@ import com.saving.auth.exception.BusinessException;
 import com.saving.auth.exception.ErrorCode;
 import com.saving.auth.repository.LoginSessionRepository;
 import com.saving.auth.repository.OtpRequestRepository;
+import com.saving.auth.repository.RoleRepository;
 import com.saving.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +40,7 @@ public class AuthService {
     private final UserRepository         userRepository;
     private final LoginSessionRepository sessionRepository;
     private final OtpRequestRepository   otpRepository;
+    private final RoleRepository         roleRepository;
     private final JwtService             jwtService;
     private final AuthenticationManager  authenticationManager;
     private final PasswordEncoder        passwordEncoder;
@@ -244,6 +248,61 @@ public class AuthService {
                 .status(user.getStatus())
                 .roles(roles)
                 .lastLoginAt(user.getLastLoginAt())
+                .build();
+    }
+
+    // ── CREATE USER (staff-only) ──────────────────────────────────
+
+    /**
+     * Create a CUSTOMER login account linked to an existing CIF.
+     * Called by TELLER or ADMIN after they have already created the customer record.
+     */
+    @Transactional
+    public CreateUserResponse createUser(CreateUserRequest request) {
+
+        // 1. Username uniqueness
+        if (userRepository.existsByUsername(request.getUsername())) {
+            throw new BusinessException(ErrorCode.USERNAME_TAKEN,
+                    "Username '" + request.getUsername() + "' is already in use");
+        }
+
+        // 2. One login account per CIF
+        if (userRepository.findByCif(request.getCif()).isPresent()) {
+            throw new BusinessException(ErrorCode.CIF_ALREADY_HAS_USER,
+                    "CIF " + request.getCif() + " already has a login account");
+        }
+
+        // 3. Resolve CUSTOMER role
+        Role customerRole = roleRepository.findByRoleCode("CUSTOMER")
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROLE_NOT_FOUND,
+                        "Role CUSTOMER not found in database"));
+
+        // 4. Build and persist User
+        User user = User.builder()
+                .username(request.getUsername())
+                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .cif(request.getCif())
+                .status("ACTIVE")
+                .build();
+        user = userRepository.save(user);
+
+        // 5. Assign CUSTOMER role
+        UserRole userRole = UserRole.builder()
+                .user(user)
+                .role(customerRole)
+                .build();
+        user.getUserRoles().add(userRole);
+        userRepository.save(user);
+
+        log.info("User account created: username={}, cif={}", user.getUsername(), user.getCif());
+
+        return CreateUserResponse.builder()
+                .userId(user.getUserId().toString())
+                .username(user.getUsername())
+                .cif(user.getCif())
+                .role("CUSTOMER")
+                .status(user.getStatus())
+                .createdAt(user.getCreatedAt())
                 .build();
     }
 

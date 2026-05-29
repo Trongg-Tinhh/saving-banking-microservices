@@ -3,6 +3,7 @@ import type { ApiResponse } from '@/types/api.types';
 import type {
   Customer,
   CustomerContact,
+  CreateCustomerRequest,
   UpdateCustomerRequest,
   UpdateContactRequest,
   CreateContactRequest,
@@ -11,6 +12,15 @@ import type {
 // ─── Customer Service ─────────────────────────────────────────────
 
 export const customerService = {
+  /** Create a new customer (staff only) */
+  async createCustomer(request: CreateCustomerRequest): Promise<Customer> {
+    const { data } = await api.post<ApiResponse<Customer>>(
+      '/api/v1/customers',
+      request,
+    );
+    return data.data!;
+  },
+
   /** Get full customer profile (info + KYC status) by CIF */
   async getCustomer(cif: string): Promise<Customer> {
     const { data } = await api.get<ApiResponse<Customer>>(`/api/v1/customers/${cif}`);

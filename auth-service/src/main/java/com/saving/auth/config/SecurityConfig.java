@@ -59,6 +59,9 @@ public class SecurityConfig {
                     .requestMatchers("/api/v1/auth/me").authenticated()
                     .requestMatchers("/api/v1/auth/verify-otp").authenticated()
                     .requestMatchers("/api/v1/auth/logout").authenticated()
+                    // Staff-only: create customer login account
+                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/admin/users")
+                            .hasAnyAuthority("TELLER", "ADMIN")
                     .anyRequest().authenticated()
             )
 

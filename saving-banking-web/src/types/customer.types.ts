@@ -3,7 +3,7 @@
 export type CustomerStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Gender         = 'MALE' | 'FEMALE' | 'OTHER';
 export type KycStatus      = 'PENDING' | 'VERIFIED' | 'REJECTED';
-export type IdType         = 'NATIONAL_ID' | 'PASSPORT' | 'DRIVER_LICENSE';
+export type IdType         = 'NATIONAL_ID' | 'PASSPORT' | 'DRIVER_LICENSE' | 'MILITARY_ID';
 
 export interface CustomerContact {
   contactId: string;
@@ -32,6 +32,23 @@ export interface Customer {
 }
 
 // ── Requests ──────────────────────────────────────────────────────
+
+export interface CreateCustomerRequest {
+  fullName:       string;
+  dateOfBirth?:   string;   // YYYY-MM-DD
+  gender?:        Gender;
+  nationality?:   string;
+  idType:         IdType;
+  idNumber:       string;
+  primaryContact: {
+    phoneNumber?: string;
+    email?:       string;
+    address?:     string;
+    district?:    string;
+    city?:        string;
+    isPrimary:    true;
+  };
+}
 
 export interface UpdateCustomerRequest {
   fullName?:    string;

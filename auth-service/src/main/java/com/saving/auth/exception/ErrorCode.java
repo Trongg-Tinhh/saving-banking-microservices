@@ -22,6 +22,8 @@ public enum ErrorCode {
     // ── User errors ───────────────────────────────────────────────
     USER_NOT_FOUND        ("USER_001", "User not found",                       HttpStatus.NOT_FOUND),
     USERNAME_TAKEN        ("USER_002", "Username already exists",              HttpStatus.CONFLICT),
+    ROLE_NOT_FOUND        ("USER_003", "Role not found",                       HttpStatus.BAD_REQUEST),
+    CIF_ALREADY_HAS_USER  ("USER_004", "This CIF already has a login account", HttpStatus.CONFLICT),
 
     // ── Validation errors ─────────────────────────────────────────
     VALIDATION_FAILED     ("VAL_001",  "Request validation failed",            HttpStatus.BAD_REQUEST),

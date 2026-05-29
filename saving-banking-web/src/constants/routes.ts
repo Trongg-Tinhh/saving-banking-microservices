@@ -29,8 +29,9 @@ export const ROUTES = {
   ACCOUNT_DETAIL:  '/accounts/:accountNo',
 
   // Customers
-  CUSTOMERS:       '/customers',
-  CUSTOMER_DETAIL: '/customers/:cif',
+  CUSTOMERS:        '/customers',
+  CUSTOMER_CREATE:  '/customers/create',
+  CUSTOMER_DETAIL:  '/customers/:cif',
 
   // Transactions
   TRANSACTIONS: '/transactions',

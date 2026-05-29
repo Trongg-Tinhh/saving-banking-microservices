@@ -2,9 +2,11 @@ package com.saving.auth.controller;
 
 import com.saving.auth.common.ApiResponse;
 import com.saving.auth.common.Constants;
+import com.saving.auth.dto.request.CreateUserRequest;
 import com.saving.auth.dto.request.LoginRequest;
 import com.saving.auth.dto.request.RefreshTokenRequest;
 import com.saving.auth.dto.request.VerifyOtpRequest;
+import com.saving.auth.dto.response.CreateUserResponse;
 import com.saving.auth.dto.response.LoginResponse;
 import com.saving.auth.dto.response.TokenValidationResponse;
 import com.saving.auth.dto.response.UserInfoResponse;
@@ -18,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.util.StringUtils;
@@ -119,6 +122,27 @@ public class AuthController {
 
         TokenValidationResponse result = authService.validateToken(token);
         return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    // ── POST /api/v1/auth/admin/users ────────────────────────────
+    // Create a CUSTOMER login account and link it to an existing CIF.
+    // Only TELLER or ADMIN may call this.
+
+    @PostMapping("/admin/users")
+    @PreAuthorize("hasAnyAuthority('TELLER','ADMIN')")
+    @Operation(summary = "Create customer login account",
+               description = "Create a CUSTOMER-role login account for an existing CIF. " +
+                             "Call AFTER POST /api/v1/customers to create the CIF first.",
+               security = @SecurityRequirement(name = "Bearer Authentication"))
+    public ResponseEntity<ApiResponse<CreateUserResponse>> createUser(
+            @Valid @RequestBody CreateUserRequest request) {
+
+        CreateUserResponse response = authService.createUser(request);
+        log.info("Customer user created: username={}, cif={}", response.getUsername(), response.getCif());
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.success(response, "User account created successfully"));
     }
 
     // ── GET /health ───────────────────────────────────────────────

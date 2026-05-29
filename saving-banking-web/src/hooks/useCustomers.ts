@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { customerService } from '@/services/customerService';
-import type { UpdateCustomerRequest, UpdateContactRequest, CreateContactRequest } from '@/types';
+import type {
+  CreateCustomerRequest,
+  UpdateCustomerRequest,
+  UpdateContactRequest,
+  CreateContactRequest,
+} from '@/types';
 
 // ─── Query keys ──────────────────────────────────────────────────
 
@@ -8,6 +13,14 @@ export const CUSTOMER_KEYS = {
   customer:  (cif: string) => ['customer', cif] as const,
   contacts:  (cif: string) => ['customer', cif, 'contacts'] as const,
 };
+
+// ─── Create customer (staff only) ────────────────────────────────
+
+export function useCreateCustomer() {
+  return useMutation({
+    mutationFn: (req: CreateCustomerRequest) => customerService.createCustomer(req),
+  });
+}
 
 // ─── Get customer ─────────────────────────────────────────────────
 
